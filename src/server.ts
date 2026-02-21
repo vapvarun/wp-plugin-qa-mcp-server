@@ -1,6 +1,6 @@
 /**
  * WP Plugin QA MCP Server - Main Server (v1.0.0)
- * 15 tools for comprehensive WordPress plugin quality assurance.
+ * 16 tools for comprehensive WordPress plugin quality assurance.
  * Note: No shell commands used. All checks are static analysis or HTTP-based.
  */
 
@@ -25,6 +25,7 @@ import { checkCompat } from './compat-checker.js';
 import { checkI18n } from './i18n-checker.js';
 import { checkPerformance } from './perf-checker.js';
 import { buildReport, formatReport } from './report-builder.js';
+import { analyzeCompetitors, formatCompetitiveReport } from './competitive-analyzer.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -124,6 +125,13 @@ export class WpPluginQaServer {
             return await this.handleAutomatedQa(
               toolArgs.plugin_path as string,
               toolArgs.site_url as string | undefined,
+            );
+
+          case 'wppqa_competitive_analysis':
+            return await this.handleCompetitiveAnalysis(
+              toolArgs.plugin_path as string,
+              toolArgs.search_keywords as string | undefined,
+              toolArgs.max_competitors as number | undefined,
             );
 
           default:
@@ -312,6 +320,18 @@ export class WpPluginQaServer {
       }
     }
 
+    return this.successResult(output);
+  }
+
+  private async handleCompetitiveAnalysis(
+    pluginPath: string, searchKeywords?: string, maxCompetitors?: number,
+  ): Promise<CallToolResult> {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const limit = Math.min(Math.max(maxCompetitors || 10, 3), 15);
+    const report = await analyzeCompetitors(pluginPath, searchKeywords, limit);
+    const markdown = formatCompetitiveReport(report);
+    let output = markdown;
+    output += `\n${'='.repeat(60)}\nJSON: ${JSON.stringify(report)}\n`;
     return this.successResult(output);
   }
 

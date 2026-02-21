@@ -406,3 +406,109 @@ export interface TestTemplate {
     expectedTemplate?: string;
   }>;
 }
+
+// ─── Competitive Analysis Types ─────────────────────────────────
+
+export interface WpOrgPluginInfo {
+  name: string;
+  slug: string;
+  version: string;
+  author: string;
+  short_description: string;
+  active_installs: number;
+  rating: number;
+  num_ratings: number;
+  tested: string;
+  requires_php: string;
+  last_updated: string;
+  tags: Record<string, string>;
+  sections: { description?: string; faq?: string };
+}
+
+export type FeatureCategory =
+  | 'cpt' | 'taxonomy' | 'rest-api' | 'block' | 'shortcode'
+  | 'widget' | 'admin-page' | 'cron' | 'cli' | 'integration'
+  | 'import-export' | 'notification' | 'multisite' | 'user-role'
+  | 'template' | 'frontend' | 'reporting' | 'general';
+
+export interface ExtractedFeature {
+  name: string;
+  normalizedName: string;
+  category: FeatureCategory;
+  source: 'manifest' | 'description' | 'tag' | 'codecanyon' | 'web';
+}
+
+export interface CompetitorInfo {
+  slug: string;
+  name: string;
+  version: string;
+  author: string;
+  active_installs: number;
+  rating: number;
+  num_ratings: number;
+  tested: string;
+  requires_php: string;
+  last_updated: string;
+  tags: string[];
+  features: ExtractedFeature[];
+  hasPremiumVersion: boolean;
+  premiumIndicators: string[];
+  marketplace: 'wordpress.org' | 'codecanyon' | 'web';
+  price?: string;
+  url?: string;
+}
+
+export interface FeatureMatrixEntry {
+  feature: string;
+  category: FeatureCategory;
+  userPlugin: boolean;
+  competitors: Record<string, boolean>;
+  frequency: number;
+  frequencyPercent: number;
+}
+
+export interface MarketGap {
+  feature: string;
+  category: FeatureCategory;
+  competitorCount: number;
+  competitorPercent: number;
+  topCompetitors: string[];
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  rationale: string;
+}
+
+export interface RoadmapItem {
+  rank: number;
+  feature: string;
+  category: FeatureCategory;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  effort: 'small' | 'medium' | 'large';
+  rationale: string;
+  competitorExamples: string[];
+}
+
+export interface CompetitiveReport {
+  userPlugin: {
+    name: string; slug: string; version: string;
+    featureCount: number; features: ExtractedFeature[];
+  };
+  market: {
+    totalCompetitorsFound: number;
+    totalCompetitorsAnalyzed: number;
+    searchTermsUsed: string[];
+    averageInstalls: number;
+    medianInstalls: number;
+    averageRating: number;
+    installDistribution: { range: string; count: number }[];
+    sourcesSearched: { source: string; found: number; status: string }[];
+  };
+  competitors: CompetitorInfo[];
+  featureMatrix: FeatureMatrixEntry[];
+  gaps: MarketGap[];
+  uniqueSellingPoints: string[];
+  essentialFeatures: string[];
+  monetizationOpportunities: { feature: string; premiumCompetitors: string[] }[];
+  roadmap: RoadmapItem[];
+  suggestedSearchUrls: { source: string; url: string }[];
+  generatedAt: string;
+}

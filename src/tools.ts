@@ -1,6 +1,6 @@
 /**
  * WP Plugin QA MCP Server - Tool Definitions
- * 15 tools for comprehensive WordPress plugin QA
+ * 16 tools for comprehensive WordPress plugin QA
  */
 
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -267,6 +267,31 @@ export const tools: Tool[] = [
         site_url: {
           type: 'string',
           description: 'Optional Local WP site URL for live checks (REST, AJAX, DB, browser)',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── Phase 4: Competitive Analysis ─────────────────────────────
+  {
+    name: 'wppqa_competitive_analysis',
+    description:
+      'Market research: scans plugin, finds competitors on WordPress.org + CodeCanyon + Google, extracts features from descriptions, compares feature sets, identifies gaps/USPs, and generates prioritized roadmap with monetization opportunities.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        search_keywords: {
+          type: 'string',
+          description: 'Comma-separated keywords for competitor search (auto-derived if not provided)',
+        },
+        max_competitors: {
+          type: 'number',
+          description: 'Max competitors to analyze in detail (default: 10, max: 15)',
         },
       },
       required: ['plugin_path'],
