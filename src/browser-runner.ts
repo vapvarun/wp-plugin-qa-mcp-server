@@ -66,12 +66,15 @@ export function checkBrowser(manifest: PluginManifest, siteUrl: string, options?
     }
   }
 
+  const errorCount = issues.filter(i => i.type === 'error').length;
+  const warningCount = issues.filter(i => i.type === 'warning').length;
+
   return {
     category: 'browser',
     issues,
-    passed: scripts.length,
-    failed: issues.filter(i => i.type === 'error').length,
-    skipped: 0,
+    passed: 0,  // Scripts are generated, not executed — no actual passes to report
+    failed: errorCount + warningCount,
+    skipped: scripts.length,  // Scripts awaiting execution
     duration: Date.now() - startTime,
   };
 }

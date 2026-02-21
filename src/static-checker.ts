@@ -26,21 +26,50 @@ export function checkStatic(pluginPath: string): CheckerResult {
   issues.push(...checkNamingConsistency(phpFiles, fileContents, pluginPath));
   issues.push(...checkSecurityPatterns(phpFiles, fileContents, pluginPath));
   issues.push(...checkUndefinedFunctions(phpFiles, fileContents, pluginPath));
-  issues.push(...checkAbspathGuard(phpFiles, fileContents, pluginPath));
-  issues.push(...checkDebugStatements(phpFiles, fileContents, pluginPath));
-  issues.push(...checkDangerousFunctions(phpFiles, fileContents, pluginPath));
-  issues.push(...checkHardcodedSecrets(phpFiles, fileContents, pluginPath));
-  issues.push(...checkDirectFileInclusion(phpFiles, fileContents, pluginPath));
-  issues.push(...checkUnsafeSqlQueries(phpFiles, fileContents, pluginPath));
+  const abspathIssues = checkAbspathGuard(phpFiles, fileContents, pluginPath);
+  const debugIssues = checkDebugStatements(phpFiles, fileContents, pluginPath);
+  const dangerousIssues = checkDangerousFunctions(phpFiles, fileContents, pluginPath);
+  const secretIssues = checkHardcodedSecrets(phpFiles, fileContents, pluginPath);
+  const fileInclusionIssues = checkDirectFileInclusion(phpFiles, fileContents, pluginPath);
+  const sqlIssues = checkUnsafeSqlQueries(phpFiles, fileContents, pluginPath);
+  const unserializeIssues = checkUnserializeOnDbData(phpFiles, fileContents, pluginPath);
+  const adminPostIssues = checkAdminPostHandlers(phpFiles, fileContents, pluginPath);
+  const ssrfIssues = checkSsrfPatterns(phpFiles, fileContents, pluginPath);
+  const dbLoopIssues = checkDbQueryInLoop(phpFiles, fileContents, pluginPath);
 
-  const failed = issues.length;
-  const passed = Math.max(0, 11 - failed);
+  issues.push(
+    ...abspathIssues, ...debugIssues, ...dangerousIssues, ...secretIssues,
+    ...fileInclusionIssues, ...sqlIssues, ...unserializeIssues,
+    ...adminPostIssues, ...ssrfIssues, ...dbLoopIssues,
+  );
+
+  // Count check areas that found errors/warnings (not info), to get meaningful pass/fail
+  const checkAreas = [
+    { name: 'dead-code', issues: issues.filter(i => i.code === 'dead-code') },
+    { name: 'duplicates', issues: issues.filter(i => i.code === 'duplicate-function') },
+    { name: 'naming', issues: issues.filter(i => i.code === 'naming-inconsistency') },
+    { name: 'security', issues: issues.filter(i => i.code === 'unsanitized-input' || i.code === 'xss-risk') },
+    { name: 'undefined', issues: issues.filter(i => i.code === 'undefined-function') },
+    { name: 'abspath', issues: abspathIssues },
+    { name: 'debug', issues: debugIssues },
+    { name: 'dangerous', issues: dangerousIssues },
+    { name: 'secrets', issues: secretIssues },
+    { name: 'file-inclusion', issues: fileInclusionIssues },
+    { name: 'sql', issues: sqlIssues },
+    { name: 'unserialize', issues: unserializeIssues },
+    { name: 'admin-post', issues: adminPostIssues },
+    { name: 'ssrf', issues: ssrfIssues },
+    { name: 'db-loop', issues: dbLoopIssues },
+  ];
+
+  const failedAreas = checkAreas.filter(a => a.issues.some(i => i.type === 'error' || (i.type === 'warning' && i.severity !== 'low'))).length;
+  const passed = checkAreas.length - failedAreas;
 
   return {
     category: 'code-quality',
     issues,
     passed,
-    failed,
+    failed: failedAreas,
     skipped: 0,
     duration: Date.now() - startTime,
   };
@@ -52,7 +81,7 @@ function checkDeadCode(phpFiles: string[], contents: Map<string, string>, plugin
   const calledFunctions = new Set<string>();
   const hookCallbacks = new Set<string>();
 
-  const skipPrefixes = /^(get_|set_|is_|has_|can_|init_|register_|handle_|process_|render_|display_|admin_|ajax_|rest_|activate|deactivate|uninstall|__construct|__destruct)/;
+  const skipPrefixes = /^(get_|set_|is_|has_|can_|init_|register_|handle_|process_|render_|display_|admin_|ajax_|rest_|activate|deactivate|uninstall|__construct|__destruct|__call|__get|__set|__isset|__unset|__toString|__invoke|__clone|__sleep|__wakeup|__serialize|__unserialize|__debugInfo|setUp|tearDown|test_)/;
 
   for (const file of phpFiles) {
     const content = contents.get(file) || '';
@@ -66,13 +95,27 @@ function checkDeadCode(phpFiles: string[], contents: Map<string, string>, plugin
       }
     }
 
+    // Match direct function calls: funcName(
     const callPattern = /\b([a-zA-Z_]\w*)\s*\(/g;
     while ((match = callPattern.exec(content)) !== null) {
       calledFunctions.add(match[1]);
     }
 
+    // Match method calls: ->methodName( and ::methodName(
+    const methodCallPattern = /(?:->|::)\s*([a-zA-Z_]\w*)\s*\(/g;
+    while ((match = methodCallPattern.exec(content)) !== null) {
+      calledFunctions.add(match[1]);
+    }
+
+    // Match hook callbacks (string and array syntax)
     const hookPattern = /(?:add_action|add_filter)\s*\([^,]+,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\])/g;
     while ((match = hookPattern.exec(content)) !== null) {
+      hookCallbacks.add(match[1] || match[2]);
+    }
+
+    // Match shortcode callbacks
+    const shortcodePattern = /add_shortcode\s*\([^,]+,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\])/g;
+    while ((match = shortcodePattern.exec(content)) !== null) {
       hookCallbacks.add(match[1] || match[2]);
     }
   }
@@ -82,6 +125,8 @@ function checkDeadCode(phpFiles: string[], contents: Map<string, string>, plugin
     if (hookCallbacks.has(funcName)) continue;
     if (skipPrefixes.test(funcName)) continue;
     if (funcName.startsWith('_')) continue;
+    // Skip class methods defined with visibility keywords (likely called via $this->)
+    // We already track ->method() calls above, but some may be called from parent/child classes
 
     issues.push({
       id: generateTestId('code-quality'),
@@ -155,10 +200,13 @@ function checkNamingConsistency(phpFiles: string[], contents: Map<string, string
     }
   }
 
+  // Remove WP core prefixes from consideration
+  const wpCorePrefixes = new Set(['wp', 'WP', 'admin', 'the', 'get', 'is', 'has', 'do', 'add', 'update', 'delete', 'check', 'load', 'set', 'remove']);
+
   let dominantPrefix = '';
   let dominantCount = 0;
   for (const [prefix, count] of prefixes) {
-    if (count > dominantCount && prefix.length >= 2) {
+    if (count > dominantCount && prefix.length >= 2 && !wpCorePrefixes.has(prefix)) {
       dominantPrefix = prefix;
       dominantCount = count;
     }
@@ -569,18 +617,208 @@ function checkUnsafeSqlQueries(phpFiles: string[], contents: Map<string, string>
     const rel = relativePath(file, pluginPath);
 
     // $wpdb->get_results/get_row/get_var with string concatenation (not prepare)
-    const queryMethods = /\$wpdb\s*->\s*(?:get_results|get_row|get_var|get_col)\s*\(\s*["'][^"']*\$/g;
+    // Use a simpler pattern to avoid catastrophic backtracking
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/\$wpdb\s*->\s*(?:get_results|get_row|get_var|get_col)\s*\(/.test(line)) {
+        // Check if this line has variable interpolation and no prepare
+        if (/\$/.test(line.split(/get_results|get_row|get_var|get_col/)[1] || '') && !/prepare/.test(line)) {
+          // Also check previous lines for prepare
+          const prevLines = lines.slice(Math.max(0, i - 3), i).join('\n');
+          if (!/prepare/.test(prevLines)) {
+            issues.push({
+              id: generateTestId('code-quality'), category: 'code-quality', severity: 'high', type: 'error',
+              title: 'SQL injection risk: query with variable interpolation',
+              message: 'Database query method uses string interpolation without $wpdb->prepare()',
+              file: rel, line: i + 1, code: 'sql-injection-interpolation',
+              fix: 'Wrap query with $wpdb->prepare() to safely handle variable data',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
+function checkUnserializeOnDbData(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+
+  for (const file of phpFiles) {
+    const content = contents.get(file) || '';
+    const rel = relativePath(file, pluginPath);
+
+    // unserialize() used on data from get_option, get_post_meta, get_user_meta etc.
+    const pattern = /\bunserialize\s*\(\s*(?:get_option|get_post_meta|get_user_meta|get_transient|get_site_option)\s*\(/g;
     let match;
-    while ((match = queryMethods.exec(content)) !== null) {
-      const contextBefore = content.substring(Math.max(0, match.index - 100), match.index);
-      if (!/prepare/.test(contextBefore)) {
+    while ((match = pattern.exec(content)) !== null) {
+      issues.push({
+        id: generateTestId('code-quality'), category: 'code-quality', severity: 'critical', type: 'error',
+        title: 'Object injection: unserialize() on database data',
+        message: 'unserialize() on get_option/get_post_meta values can lead to object injection if data is tampered',
+        file: rel, line: getLineNumber(content, match.index), code: 'object-injection',
+        fix: 'WordPress auto-unserializes option/meta values. If manual unserialize is needed, use maybe_unserialize() or json_decode() instead',
+      });
+    }
+
+    // Also catch: $data = get_option(...); ... unserialize($data)
+    const varPattern = /\bunserialize\s*\(\s*\$\w+\s*\)/g;
+    while ((match = varPattern.exec(content)) !== null) {
+      const lineNum = getLineNumber(content, match.index);
+      const contextStart = Math.max(0, match.index - 500);
+      const context = content.substring(contextStart, match.index);
+      if (/get_option|get_post_meta|get_user_meta|get_transient/.test(context)) {
         issues.push({
-          id: generateTestId('code-quality'), category: 'code-quality', severity: 'high', type: 'error',
-          title: 'SQL injection risk: query with variable interpolation',
-          message: 'Database query method uses string interpolation without $wpdb->prepare()',
-          file: rel, line: getLineNumber(content, match.index), code: 'sql-injection-interpolation',
-          fix: 'Wrap query with $wpdb->prepare() to safely handle variable data',
+          id: generateTestId('code-quality'), category: 'code-quality', severity: 'high', type: 'warning',
+          title: 'Potential object injection: unserialize() on variable from DB',
+          message: 'Variable passed to unserialize() may contain database-sourced data',
+          file: rel, line: lineNum, code: 'object-injection-indirect',
+          fix: 'Use maybe_unserialize() or json_decode() instead of unserialize()',
         });
+      }
+    }
+  }
+
+  return issues;
+}
+
+function checkAdminPostHandlers(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+
+  for (const file of phpFiles) {
+    const content = contents.get(file) || '';
+    const rel = relativePath(file, pluginPath);
+
+    // Find admin_post_ and admin_post_nopriv_ action registrations
+    const pattern = /add_action\s*\(\s*['"]admin_post_(?:nopriv_)?([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|function\s*\()/g;
+    let match;
+
+    while ((match = pattern.exec(content)) !== null) {
+      const action = match[1];
+      const callback = match[2] || match[3];
+      const isClosure = !match[2] && !match[3];
+
+      let hasNonceCheck = false;
+
+      if (isClosure) {
+        const closureEnd = Math.min(match.index + 2000, content.length);
+        const closureBody = content.substring(match.index, closureEnd);
+        hasNonceCheck = /check_admin_referer|wp_verify_nonce/.test(closureBody);
+      } else if (callback) {
+        // Find the callback function
+        const funcPattern = new RegExp(`function\\s+${callback}\\s*\\([^)]*\\)\\s*\\{`, 'g');
+        for (const f of phpFiles) {
+          const c = contents.get(f) || '';
+          const funcMatch = funcPattern.exec(c);
+          if (funcMatch) {
+            const funcEnd = Math.min(funcMatch.index + 2000, c.length);
+            const funcBody = c.substring(funcMatch.index, funcEnd);
+            hasNonceCheck = /check_admin_referer|wp_verify_nonce/.test(funcBody);
+            break;
+          }
+        }
+      }
+
+      if (!hasNonceCheck) {
+        issues.push({
+          id: generateTestId('code-quality'), category: 'code-quality', severity: 'critical', type: 'error',
+          title: `admin_post handler "${action}" missing nonce verification`,
+          message: `admin_post_${action} handler has no check_admin_referer() or wp_verify_nonce() — CSRF risk`,
+          file: rel, line: getLineNumber(content, match.index), code: 'admin-post-no-nonce',
+          fix: 'Add check_admin_referer("action_name", "nonce_field") at the start of the handler',
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
+function checkSsrfPatterns(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+
+  for (const file of phpFiles) {
+    const content = contents.get(file) || '';
+    const rel = relativePath(file, pluginPath);
+
+    // wp_remote_get/post/request with user-controlled URL
+    const pattern = /wp_remote_(?:get|post|request|head)\s*\(\s*\$_(POST|GET|REQUEST)\s*\[/g;
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      issues.push({
+        id: generateTestId('code-quality'), category: 'code-quality', severity: 'critical', type: 'error',
+        title: 'SSRF: wp_remote_* with user-controlled URL',
+        message: `wp_remote_*() called with $_{${match[1]}} URL — Server-Side Request Forgery risk`,
+        file: rel, line: getLineNumber(content, match.index), code: 'ssrf-risk',
+        fix: 'Validate and sanitize URLs. Use wp_http_validate_url() and restrict to allowed hosts/protocols',
+      });
+    }
+
+    // Also check for indirect SSRF: variable from user input passed to wp_remote_*
+    const indirectPattern = /wp_remote_(?:get|post|request|head)\s*\(\s*\$(?!this|wp)/g;
+    while ((match = indirectPattern.exec(content)) !== null) {
+      const lineNum = getLineNumber(content, match.index);
+      const lineContent = (content.split('\n')[lineNum - 1] || '').trim();
+      // Only flag if the variable is likely from user input
+      if (/\$url|\$link|\$endpoint|\$remote|\$target|\$redirect/.test(lineContent)) {
+        const contextStart = Math.max(0, match.index - 500);
+        const context = content.substring(contextStart, match.index);
+        if (/\$_(POST|GET|REQUEST)/.test(context)) {
+          issues.push({
+            id: generateTestId('code-quality'), category: 'code-quality', severity: 'high', type: 'warning',
+            title: 'Potential SSRF: wp_remote_* with user-derived URL',
+            message: 'URL variable passed to wp_remote_*() may originate from user input',
+            file: rel, line: lineNum, code: 'ssrf-risk-indirect',
+            fix: 'Validate URLs with wp_http_validate_url() before making remote requests',
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
+function checkDbQueryInLoop(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+
+  for (const file of phpFiles) {
+    const content = contents.get(file) || '';
+    const rel = relativePath(file, pluginPath);
+    const lines = content.split('\n');
+
+    let insideLoop = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Track loop nesting
+      if (/\b(?:foreach|for|while)\s*\(/.test(line)) insideLoop++;
+      if (insideLoop > 0 && /\}\s*$/.test(line.trim())) insideLoop = Math.max(0, insideLoop - 1);
+
+      if (insideLoop > 0) {
+        // Check for DB queries inside loops (N+1 pattern)
+        if (/\bget_(?:option|post_meta|user_meta|term_meta|comment_meta)\s*\(/.test(line)) {
+          issues.push({
+            id: generateTestId('performance'), category: 'code-quality', severity: 'high', type: 'warning',
+            title: 'N+1 query: DB lookup inside loop',
+            message: 'get_option/get_post_meta/get_user_meta called inside a loop — causes N+1 queries',
+            file: rel, line: i + 1, code: 'n-plus-one-query',
+            fix: 'Batch-fetch data before the loop using get_posts with meta_query, or cache results',
+          });
+        }
+
+        // WP_Query inside loop
+        if (/new\s+WP_Query\s*\(/.test(line)) {
+          issues.push({
+            id: generateTestId('performance'), category: 'code-quality', severity: 'high', type: 'warning',
+            title: 'N+1 query: WP_Query inside loop',
+            message: 'new WP_Query() inside a loop — potentially hundreds of queries',
+            file: rel, line: i + 1, code: 'query-in-loop',
+            fix: 'Restructure to run a single query before the loop',
+          });
+        }
       }
     }
   }

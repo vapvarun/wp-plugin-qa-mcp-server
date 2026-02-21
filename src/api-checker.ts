@@ -17,16 +17,32 @@ export async function checkApi(manifest: PluginManifest, siteUrl: string): Promi
   let wpNonce = '';
   try {
     const loginResp = await fetch(`${baseUrl}/?autologin=1`, { redirect: 'manual' });
-    const setCookies = loginResp.headers.getSetCookie?.() || [];
+
+    // Extract cookies — compatible with Node 18+ (getSetCookie may not exist on older builds)
+    let setCookies: string[] = [];
+    if (typeof loginResp.headers.getSetCookie === 'function') {
+      setCookies = loginResp.headers.getSetCookie();
+    } else {
+      // Fallback: parse raw set-cookie header
+      const rawCookie = loginResp.headers.get('set-cookie');
+      if (rawCookie) {
+        setCookies = rawCookie.split(/,(?=\s*\w+=)/);
+      }
+    }
     authCookie = setCookies.filter(c => c.includes('wordpress_logged_in')).join('; ');
 
-    // Get WP REST nonce
+    // Get WP REST nonce by loading wp-admin page and extracting wpApiSettings.nonce
     if (authCookie) {
-      const nonceResp = await fetch(`${baseUrl}/wp-admin/admin-ajax.php?action=rest-nonce`, {
+      const adminResp = await fetch(`${baseUrl}/wp-admin/`, {
         headers: { 'Cookie': authCookie },
       });
-      if (nonceResp.ok) {
-        wpNonce = await nonceResp.text();
+      if (adminResp.ok) {
+        const adminHtml = await adminResp.text();
+        // WP outputs: var wpApiSettings = {"root":"...","nonce":"abc123",...}
+        const nonceMatch = adminHtml.match(/wpApiSettings\s*=\s*\{[^}]*"nonce"\s*:\s*"([^"]+)"/);
+        if (nonceMatch) {
+          wpNonce = nonceMatch[1];
+        }
       }
     }
   } catch (e) {

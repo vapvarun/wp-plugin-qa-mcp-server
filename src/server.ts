@@ -26,6 +26,7 @@ import { checkI18n } from './i18n-checker.js';
 import { checkPerformance } from './perf-checker.js';
 import { buildReport, formatReport } from './report-builder.js';
 import type { PluginManifest, CheckerResult } from './types.js';
+import { resetIdCounter } from './shared-utils.js';
 
 export class WpPluginQaServer {
   private server: Server;
@@ -54,6 +55,9 @@ export class WpPluginQaServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       const toolArgs = (args || {}) as Record<string, unknown>;
+
+      // Reset ID counter at start of each tool call to avoid cross-call collisions
+      resetIdCounter();
 
       try {
         switch (name) {

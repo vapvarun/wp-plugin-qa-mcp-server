@@ -1,6 +1,6 @@
 /**
  * WP Plugin QA MCP Server - Plugin Scanner
- * 16 parallel regex scanners for comprehensive feature discovery
+ * 21 regex scanners for comprehensive feature discovery
  * + cross-layer wiring analysis (HTML->JS->PHP)
  */
 
@@ -38,7 +38,7 @@ export function scanPlugin(pluginPath: string): PluginManifest {
     jsContents.set(file, safeReadFile(file));
   }
 
-  // Run all 16 scanners
+  // Run all 21 scanners
   const header = scanPluginHeader(phpFiles, phpContents, pluginPath);
   const cpts = scanCPTs(phpFiles, phpContents, pluginPath);
   const taxonomies = scanTaxonomies(phpFiles, phpContents, pluginPath);
@@ -232,7 +232,8 @@ function scanTaxonomies(phpFiles: string[], contents: Map<string, string>, plugi
 
 function scanShortcodes(phpFiles: string[], contents: Map<string, string>, pluginPath: string): ShortcodeInfo[] {
   const shortcodes: ShortcodeInfo[] = [];
-  const pattern = /add_shortcode\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\])/g;
+  // Match: string callback, array callback, or closure callback
+  const pattern = /add_shortcode\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|function\s*\()/g;
 
   for (const file of phpFiles) {
     const content = contents.get(file) || '';
@@ -242,7 +243,7 @@ function scanShortcodes(phpFiles: string[], contents: Map<string, string>, plugi
     while ((match = pattern.exec(content)) !== null) {
       shortcodes.push({
         tag: match[1],
-        callback: match[2] || match[3],
+        callback: match[2] || match[3] || '[closure]',
         file: rel,
         line: getLineNumber(content, match.index),
       });
@@ -356,9 +357,10 @@ function scanRestRoutes(phpFiles: string[], contents: Map<string, string>, plugi
 
 function scanAjaxHandlers(phpFiles: string[], contents: Map<string, string>, pluginPath: string): AjaxHandlerInfo[] {
   const handlers: AjaxHandlerInfo[] = [];
-  const pattern = /add_action\s*\(\s*['"]wp_ajax_(nopriv_)?([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\])/g;
+  // Match: string callback, array callback, or closure callback
+  const pattern = /add_action\s*\(\s*['"]wp_ajax_(nopriv_)?([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|function\s*\()/g;
 
-  const actionMap = new Map<string, { loggedIn: boolean; loggedOut: boolean; callback: string; file: string; line: number }>();
+  const actionMap = new Map<string, { loggedIn: boolean; loggedOut: boolean; callback: string; file: string; line: number; isClosure: boolean; closureIndex: number }>();
 
   for (const file of phpFiles) {
     const content = contents.get(file) || '';
@@ -368,7 +370,8 @@ function scanAjaxHandlers(phpFiles: string[], contents: Map<string, string>, plu
     while ((match = pattern.exec(content)) !== null) {
       const isNopriv = !!match[1];
       const action = match[2];
-      const callback = match[3] || match[4];
+      const callback = match[3] || match[4] || '[closure]';
+      const isClosure = !match[3] && !match[4];
       const line = getLineNumber(content, match.index);
 
       const existing = actionMap.get(action);
@@ -382,6 +385,8 @@ function scanAjaxHandlers(phpFiles: string[], contents: Map<string, string>, plu
           callback,
           file: rel,
           line,
+          isClosure,
+          closureIndex: match.index,
         });
       }
     }
@@ -390,16 +395,31 @@ function scanAjaxHandlers(phpFiles: string[], contents: Map<string, string>, plu
   for (const [action, info] of actionMap) {
     let hasNonceCheck = false;
 
-    for (const file of phpFiles) {
-      const content = contents.get(file) || '';
-      if (content.includes(info.callback)) {
-        const funcPattern = new RegExp(`function\\s+${info.callback}\\s*\\([^)]*\\)\\s*\\{`, 'g');
-        const funcMatch = funcPattern.exec(content);
-        if (funcMatch) {
-          const funcEnd = Math.min(funcMatch.index + 2000, content.length);
-          const funcBody = content.substring(funcMatch.index, funcEnd);
-          if (/check_ajax_referer|wp_verify_nonce/.test(funcBody)) {
-            hasNonceCheck = true;
+    if (info.isClosure) {
+      // For closures, check the 2000 chars after the add_action call
+      for (const file of phpFiles) {
+        const content = contents.get(file) || '';
+        const rel = relativePath(file, pluginPath);
+        if (rel !== info.file) continue;
+        const closureEnd = Math.min(info.closureIndex + 2000, content.length);
+        const closureBody = content.substring(info.closureIndex, closureEnd);
+        if (/check_ajax_referer|check_admin_referer|wp_verify_nonce/.test(closureBody)) {
+          hasNonceCheck = true;
+        }
+      }
+    } else {
+      // Named callback — find the function definition
+      for (const file of phpFiles) {
+        const content = contents.get(file) || '';
+        if (content.includes(info.callback)) {
+          const funcPattern = new RegExp(`function\\s+${info.callback}\\s*\\([^)]*\\)\\s*\\{`, 'g');
+          const funcMatch = funcPattern.exec(content);
+          if (funcMatch) {
+            const funcEnd = Math.min(funcMatch.index + 2000, content.length);
+            const funcBody = content.substring(funcMatch.index, funcEnd);
+            if (/check_ajax_referer|check_admin_referer|wp_verify_nonce/.test(funcBody)) {
+              hasNonceCheck = true;
+            }
           }
         }
       }

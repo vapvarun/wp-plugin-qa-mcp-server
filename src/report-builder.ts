@@ -33,7 +33,8 @@ export function buildReport(
 
   for (const result of results) {
     const total = result.passed + result.failed + result.skipped;
-    const score = total > 0 ? Math.round((result.passed / (result.passed + result.failed)) * 100) : 100;
+    const denominator = result.passed + result.failed;
+    const score = denominator > 0 ? Math.round((result.passed / denominator) * 100) : 0;
 
     categories.push({
       category: result.category as TestCategory,
