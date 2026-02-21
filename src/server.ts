@@ -15,7 +15,7 @@ import {
 import { tools } from './tools.js';
 import { scanPlugin } from './scanner.js';
 import { generateTestPlan } from './plan-generator.js';
-import { checkStatic } from './static-checker.js';
+import { checkStatic, resetWpCliCache } from './static-checker.js';
 import { checkApi } from './api-checker.js';
 import { checkDatabase } from './db-checker.js';
 import { checkBrowser } from './browser-runner.js';
@@ -72,7 +72,7 @@ export class WpPluginQaServer {
             return this.handleFullScan(toolArgs.plugin_path as string);
 
           case 'wppqa_check_static':
-            return this.handleCheckStatic(toolArgs.plugin_path as string);
+            return this.handleCheckStatic(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined);
 
           case 'wppqa_check_api':
             return await this.handleCheckApi(
@@ -168,9 +168,10 @@ export class WpPluginQaServer {
     return this.successResult(JSON.stringify({ manifest, plan }, null, 2));
   }
 
-  private handleCheckStatic(pluginPath: string): CallToolResult {
+  private handleCheckStatic(pluginPath: string, siteUrl?: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkStatic(pluginPath);
+    resetWpCliCache();
+    const result = checkStatic(pluginPath, siteUrl);
     return this.formatCheckerResult(result);
   }
 
@@ -284,7 +285,8 @@ export class WpPluginQaServer {
     const allResults: CheckerResult[] = [];
 
     // Group A: Static checks (always run)
-    allResults.push(checkStatic(pluginPath));
+    resetWpCliCache();
+    allResults.push(checkStatic(pluginPath, siteUrl));
     allResults.push(checkTemplates(pluginPath));
     allResults.push(checkI18n(pluginPath));
     allResults.push(checkCompat(pluginPath));

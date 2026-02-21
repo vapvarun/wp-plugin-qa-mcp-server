@@ -57,13 +57,17 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_check_static',
     description:
-      'Static code analysis: dead code detection, duplicate/similar functions, undefined function calls, naming consistency (plugin prefix), code pattern consistency. No running site needed.',
+      'Static code analysis: dead code detection, duplicate/similar functions, undefined function calls, naming consistency (plugin prefix), code pattern consistency. If site_url is provided, uses WP-CLI to discover all available functions from the running WordPress install for accurate undefined-function detection.',
     inputSchema: {
       type: 'object',
       properties: {
         plugin_path: {
           type: 'string',
           description: 'Absolute path to the WordPress plugin directory',
+        },
+        site_url: {
+          type: 'string',
+          description: 'Optional WordPress site URL (e.g. http://roadmap.local) — enables WP-CLI function discovery for accurate undefined-function detection',
         },
       },
       required: ['plugin_path'],
