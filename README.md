@@ -52,7 +52,7 @@ An MCP (Model Context Protocol) server that provides comprehensive quality assur
 ### Phase 4: Market Research
 | Tool | Description |
 |------|-------------|
-| `wppqa_market` | Find competitors, compare features, identify gaps, generate roadmap |
+| `wppqa_competitive_analysis` | Find competitors, compare features, identify gaps, generate roadmap |
 
 ## Setup
 
@@ -103,12 +103,12 @@ Adds REST API, database, and browser testing on top of static checks.
 
 ### Competitive Analysis
 ```
-wppqa_market({ plugin_path: "/path/to/my-plugin" })
+wppqa_competitive_analysis({ plugin_path: "/path/to/my-plugin" })
 ```
 Searches WordPress.org, CodeCanyon, and Google for competitors. Returns feature matrix, gap analysis, USPs, monetization opportunities, and a prioritized roadmap.
 
 ```
-wppqa_market({
+wppqa_competitive_analysis({
   plugin_path: "/path/to/my-plugin",
   search_keywords: "membership,user registration",
   max_competitors: 15
