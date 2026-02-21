@@ -1,0 +1,36 @@
+{
+  "name": "wp-plugin-qa-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for comprehensive WordPress plugin QA - scans any plugin, generates test plans, executes automated checks across 13 categories",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "wp-plugin-qa": "./build/index.js"
+  },
+  "scripts": {
+    "build": "./node_modules/.bin/tsc && chmod +x build/index.js",
+    "start": "node build/index.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "wordpress",
+    "qa",
+    "testing",
+    "plugin-quality",
+    "model-context-protocol",
+    "claude"
+  ],
+  "author": "Varun Dubey <varun@wbcomdesigns.com>",
+  "license": "GPL-2.0-or-later",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.33",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

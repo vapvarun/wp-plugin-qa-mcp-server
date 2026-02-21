@@ -1,0 +1,5 @@
+node_modules/
+build/
+playwright/generated/
+*.js.map
+.DS_Store
