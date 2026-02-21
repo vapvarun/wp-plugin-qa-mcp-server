@@ -127,7 +127,7 @@ export class WpPluginQaServer {
               toolArgs.site_url as string | undefined,
             );
 
-          case 'wppqa_competitive_analysis':
+          case 'wppqa_market':
             return await this.handleCompetitiveAnalysis(
               toolArgs.plugin_path as string,
               toolArgs.search_keywords as string | undefined,

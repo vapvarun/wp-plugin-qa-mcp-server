@@ -275,7 +275,7 @@ export const tools: Tool[] = [
 
   // ─── Phase 4: Competitive Analysis ─────────────────────────────
   {
-    name: 'wppqa_competitive_analysis',
+    name: 'wppqa_market',
     description:
       'Market research: scans plugin, finds competitors on WordPress.org + CodeCanyon + Google, extracts features from descriptions, compares feature sets, identifies gaps/USPs, and generates prioritized roadmap with monetization opportunities.',
     inputSchema: {
