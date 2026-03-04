@@ -1,8 +1,9 @@
 /**
- * WP Plugin QA MCP Server - Browser Runner
+ * WP Plugin QA MCP Server - Browser Test Script Generator
  * Generates Playwright test scripts for admin pages, blocks, responsive testing.
- * Dual mode: generates scripts for Claude/manual execution OR returns test definitions.
- * Note: No shell commands or child processes used. Generates script files only.
+ * IMPORTANT: This tool generates .spec.ts files only — it does NOT execute browser tests.
+ * For actual browser testing, use the Playwright MCP tools (browser_navigate, browser_snapshot, etc.)
+ * or run the exported scripts with: npx playwright test
  */
 
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
@@ -49,9 +50,9 @@ export function checkBrowser(manifest: PluginManifest, siteUrl: string, options?
   } else {
     issues.push({
       id: generateTestId('browser'), category: 'browser', severity: 'low', type: 'info',
-      title: `${scripts.length} browser tests defined`,
-      message: 'Use exportDir option to generate Playwright scripts, or use webapp-testing skill to run interactively',
-      file: '', line: 0, code: 'tests-defined',
+      title: `${scripts.length} browser test scripts generated (not executed)`,
+      message: 'Scripts are generated but NOT executed. To actually run browser tests: (1) Use mode="export" to save .spec.ts files, then run with npx playwright test, or (2) Use the Playwright MCP tools (browser_navigate, browser_snapshot) for interactive testing.',
+      file: '', line: 0, code: 'scripts-generated-not-executed',
     });
   }
 

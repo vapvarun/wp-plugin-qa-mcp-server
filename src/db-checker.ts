@@ -1,13 +1,14 @@
 /**
  * WP Plugin QA MCP Server - Database Checker
- * MySQL checks for custom tables, settings, CPT storage, data cleanup.
- * Uses HTTP-based checks against running WP site. No direct shell usage.
+ * MySQL checks for custom tables, settings, CPT storage, data cleanup,
+ * orphaned options, transient cleanup, dbDelta schema, charset/collation.
+ * Uses HTTP-based checks against running WP site + static analysis. No direct shell usage.
  */
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { CheckerResult, CheckerIssue, PluginManifest } from './types.js';
-import { generateTestId, findPhpFiles, relativePath, getLineNumber } from './shared-utils.js';
+import { generateTestId, findPhpFiles, relativePath, getLineNumber, safeReadFile } from './shared-utils.js';
 
 export async function checkDatabase(manifest: PluginManifest, siteUrl: string): Promise<CheckerResult> {
   const startTime = Date.now();
@@ -59,12 +60,17 @@ export async function checkDatabase(manifest: PluginManifest, siteUrl: string): 
   // Static checks
   issues.push(...checkDataCleanup(manifest));
   issues.push(...checkAutoloadOptions(manifest));
+  issues.push(...checkOrphanedOptions(manifest));
+  issues.push(...checkTransientCleanup(manifest));
+  issues.push(...checkDbDeltaSchema(manifest));
+  issues.push(...checkCharsetCollation(manifest));
 
   const failed = issues.filter(i => i.type === 'error').length;
+  const totalChecks = manifest.features.dbTables.length + manifest.features.settings.length + 6; // 6 static check categories
   return {
     category: 'database',
     issues,
-    passed: Math.max(0, (manifest.features.dbTables.length + manifest.features.settings.length + 2) - failed),
+    passed: Math.max(0, totalChecks - failed),
     failed,
     skipped: 0,
     duration: Date.now() - startTime,
@@ -132,6 +138,198 @@ function checkAutoloadOptions(manifest: PluginManifest): CheckerIssue[] {
         }
       }
     } catch { /* skip */ }
+  }
+
+  return issues;
+}
+
+function checkOrphanedOptions(manifest: PluginManifest): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+  const phpFiles = findPhpFiles(manifest.pluginPath);
+  const slug = manifest.header.slug || manifest.header.textDomain;
+  const prefix = slug.replace(/-/g, '_');
+
+  const writtenOptions = new Map<string, { file: string; line: number }>();
+  const readOptions = new Set<string>();
+
+  for (const file of phpFiles) {
+    const content = safeReadFile(file);
+    if (!content) continue;
+    const rel = relativePath(file, manifest.pluginPath);
+
+    const writePattern = /(?:add_option|update_option)\s*\(\s*['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = writePattern.exec(content)) !== null) {
+      const optName = match[1];
+      if (optName.includes(prefix) || optName.includes(slug)) {
+        if (!writtenOptions.has(optName)) {
+          writtenOptions.set(optName, { file: rel, line: getLineNumber(content, match.index) });
+        }
+      }
+    }
+
+    const readPattern = /get_option\s*\(\s*['"]([^'"]+)['"]/g;
+    while ((match = readPattern.exec(content)) !== null) {
+      readOptions.add(match[1]);
+    }
+  }
+
+  const orphaned: string[] = [];
+  for (const [optName] of writtenOptions) {
+    if (!readOptions.has(optName)) {
+      orphaned.push(optName);
+    }
+  }
+
+  if (orphaned.length > 0) {
+    issues.push({
+      id: generateTestId('database'), category: 'database', severity: 'low', type: 'info',
+      title: `${orphaned.length} potentially orphaned options`,
+      message: `Options stored but never read with get_option(): ${orphaned.slice(0, 5).join(', ')}${orphaned.length > 5 ? ` and ${orphaned.length - 5} more` : ''}`,
+      file: '', line: 0, code: 'orphaned-options',
+      fix: 'Remove unused options or verify they are read dynamically',
+    });
+  }
+
+  return issues;
+}
+
+function checkTransientCleanup(manifest: PluginManifest): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+  const phpFiles = findPhpFiles(manifest.pluginPath);
+
+  const setTransients = new Set<string>();
+  const deletedTransients = new Set<string>();
+
+  for (const file of phpFiles) {
+    const content = safeReadFile(file);
+    if (!content) continue;
+
+    const setPattern = /set_transient\s*\(\s*['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = setPattern.exec(content)) !== null) {
+      setTransients.add(match[1]);
+    }
+
+    const deletePattern = /delete_transient\s*\(\s*['"]([^'"]+)['"]/g;
+    while ((match = deletePattern.exec(content)) !== null) {
+      deletedTransients.add(match[1]);
+    }
+  }
+
+  const neverDeleted: string[] = [];
+  for (const t of setTransients) {
+    if (!deletedTransients.has(t)) {
+      neverDeleted.push(t);
+    }
+  }
+
+  if (neverDeleted.length > 0) {
+    issues.push({
+      id: generateTestId('database'), category: 'database', severity: 'low', type: 'warning',
+      title: `${neverDeleted.length} transients never explicitly deleted`,
+      message: `Transients set but never deleted: ${neverDeleted.slice(0, 5).join(', ')}${neverDeleted.length > 5 ? ` and ${neverDeleted.length - 5} more` : ''}. Ensure cleanup on deactivation/uninstall.`,
+      file: '', line: 0, code: 'transient-no-cleanup',
+      fix: 'Add delete_transient() calls in deactivation hook or uninstall.php',
+    });
+  }
+
+  return issues;
+}
+
+function checkDbDeltaSchema(manifest: PluginManifest): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+  if (manifest.features.dbTables.length === 0) return issues;
+
+  const phpFiles = findPhpFiles(manifest.pluginPath);
+
+  for (const file of phpFiles) {
+    const content = safeReadFile(file);
+    if (!content) continue;
+    const rel = relativePath(file, manifest.pluginPath);
+
+    if (!/dbDelta/.test(content)) continue;
+
+    const createMatches = content.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?['"]/gi);
+    if (createMatches) {
+      for (const cm of createMatches) {
+        const idx = content.indexOf(cm);
+        const context = content.substring(Math.max(0, idx - 100), idx + cm.length + 200);
+
+        if (!/\$wpdb->prefix|\$table_prefix|\{?\$prefix\}?/.test(context)) {
+          issues.push({
+            id: generateTestId('database'), category: 'database', severity: 'high', type: 'error',
+            title: 'CREATE TABLE without $wpdb->prefix',
+            message: 'Custom tables must use $wpdb->prefix to support multisite and custom table prefixes',
+            file: rel, line: getLineNumber(content, idx), code: 'dbdelta-no-prefix',
+            fix: 'Use "$wpdb->prefix . \'your_table\'" for the table name',
+          });
+        }
+
+        const schemaEnd = content.indexOf(';', idx);
+        const schema = content.substring(idx, schemaEnd > 0 ? schemaEnd : idx + 1000);
+        if (!/PRIMARY\s+KEY/i.test(schema)) {
+          issues.push({
+            id: generateTestId('database'), category: 'database', severity: 'medium', type: 'warning',
+            title: 'CREATE TABLE without PRIMARY KEY',
+            message: 'Custom tables should have a PRIMARY KEY for proper indexing. dbDelta requires "PRIMARY KEY" on its own line.',
+            file: rel, line: getLineNumber(content, idx), code: 'dbdelta-no-primary-key',
+            fix: 'Add PRIMARY KEY definition to the table schema',
+          });
+        }
+
+        if (!/\$charset_collate|\$wpdb->get_charset_collate|CHARSET|COLLATE/i.test(schema)) {
+          issues.push({
+            id: generateTestId('database'), category: 'database', severity: 'medium', type: 'warning',
+            title: 'CREATE TABLE without charset/collation',
+            message: 'Custom tables should use $wpdb->get_charset_collate() to match WordPress defaults',
+            file: rel, line: getLineNumber(content, idx), code: 'dbdelta-no-charset',
+            fix: 'Append $wpdb->get_charset_collate() to the CREATE TABLE statement',
+          });
+        }
+      }
+    }
+
+    if (/dbDelta\s*\(/.test(content) && !/require.*upgrade\.php/.test(content)) {
+      const idx = content.indexOf('dbDelta');
+      issues.push({
+        id: generateTestId('database'), category: 'database', severity: 'medium', type: 'warning',
+        title: 'dbDelta called without including upgrade.php',
+        message: 'dbDelta() requires wp-admin/includes/upgrade.php to be loaded first',
+        file: rel, line: getLineNumber(content, idx), code: 'dbdelta-no-upgrade-include',
+        fix: "Add: require_once ABSPATH . 'wp-admin/includes/upgrade.php';",
+      });
+    }
+  }
+
+  return issues;
+}
+
+function checkCharsetCollation(manifest: PluginManifest): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+  if (manifest.features.dbTables.length === 0) return issues;
+
+  const phpFiles = findPhpFiles(manifest.pluginPath);
+
+  for (const file of phpFiles) {
+    const content = safeReadFile(file);
+    if (!content) continue;
+    const rel = relativePath(file, manifest.pluginPath);
+
+    const hardcodedCharset = /(?:DEFAULT\s+)?CHARSET\s*=\s*(?:utf8mb4|utf8|latin1)/gi;
+    let match;
+    while ((match = hardcodedCharset.exec(content)) !== null) {
+      const context = content.substring(Math.max(0, match.index - 200), match.index + match[0].length);
+      if (!/get_charset_collate/.test(context)) {
+        issues.push({
+          id: generateTestId('database'), category: 'database', severity: 'low', type: 'info',
+          title: 'Hardcoded charset in table schema',
+          message: `Found hardcoded "${match[0]}" instead of $wpdb->get_charset_collate()`,
+          file: rel, line: getLineNumber(content, match.index), code: 'hardcoded-charset',
+          fix: 'Replace with $wpdb->get_charset_collate() for compatibility across environments',
+        });
+      }
+    }
   }
 
   return issues;

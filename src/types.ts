@@ -287,7 +287,10 @@ export type TestCategory =
   | 'action-audit'
   | 'compatibility'
   | 'i18n'
-  | 'performance';
+  | 'performance'
+  | 'wporg-ready'
+  | 'a11y'
+  | 'conflicts';
 
 export interface TestItem {
   id: string;
@@ -389,6 +392,105 @@ export interface QaReport {
     highBugs: number;
     mediumBugs: number;
     lowBugs: number;
+  };
+}
+
+// ─── Gap Analysis Types ─────────────────────────────────────────
+
+export type MaturityLevel = 'missing' | 'stub' | 'basic' | 'complete' | 'excellent';
+
+export type GapPriority = 'critical' | 'important' | 'recommended' | 'nice-to-have';
+
+export type GapRuleType = 'conditional' | 'unconditional';
+
+export interface GapFinding {
+  id: string;
+  rule: string;
+  priority: GapPriority;
+  type: GapRuleType;
+  trigger: string;
+  finding: string;
+  recommendation: string;
+  effort: 'small' | 'medium' | 'large';
+}
+
+export interface FeatureMaturity {
+  area: string;
+  level: MaturityLevel;
+  score: number;
+  details: string;
+  items: string[];
+}
+
+export interface PluginInventory {
+  cpts: number;
+  taxonomies: number;
+  restRoutes: number;
+  ajaxHandlers: number;
+  blocks: number;
+  shortcodes: number;
+  adminPages: number;
+  settings: number;
+  widgets: number;
+  metaBoxes: number;
+  cronJobs: number;
+  cliCommands: number;
+  dbTables: number;
+  templates: number;
+  hooksProvided: number;
+  hooksConsumed: number;
+  activationHooks: number;
+  customRoles: number;
+  integrations: number;
+}
+
+export interface GapAnalysisResult {
+  pluginName: string;
+  pluginVersion: string;
+  analyzedAt: string;
+  inventory: PluginInventory;
+  maturity: FeatureMaturity[];
+  gaps: GapFinding[];
+  overallMaturity: MaturityLevel;
+  overallMaturityScore: number;
+  summary: {
+    totalGaps: number;
+    critical: number;
+    important: number;
+    recommended: number;
+    niceToHave: number;
+  };
+}
+
+export interface AuditReport {
+  pluginName: string;
+  pluginVersion: string;
+  auditedAt: string;
+  inventory: PluginInventory;
+  maturity: FeatureMaturity[];
+  overallMaturity: MaturityLevel;
+  overallMaturityScore: number;
+  gapAnalysis: GapFinding[];
+  codeQuality: {
+    grade: string;
+    score: number;
+    categories: CategoryScore[];
+    bugs: BugReport[];
+    summary: {
+      totalTests: number;
+      passed: number;
+      failed: number;
+      skipped: number;
+      criticalBugs: number;
+      highBugs: number;
+      mediumBugs: number;
+      lowBugs: number;
+    };
+  };
+  actionItems: {
+    critical: string[];
+    important: string[];
+    recommended: string[];
   };
 }
 

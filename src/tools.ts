@@ -1,6 +1,6 @@
 /**
  * WP Plugin QA MCP Server - Tool Definitions
- * 16 tools for comprehensive WordPress plugin QA
+ * 22 tools for comprehensive WordPress plugin QA
  */
 
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -114,7 +114,7 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_check_browser',
     description:
-      'Playwright-based browser testing: admin page loads, JS console errors, responsive viewports (375/768/1024px), form submissions, block editor operations. Can run directly or export scripts. Requires Local WP running.',
+      'Generate Playwright test scripts for browser testing: admin page loads, JS console errors, responsive viewports, form submissions, block editor. NOTE: This tool generates .spec.ts files only — it does NOT execute tests. Use mode="export" to save scripts, then run with npx playwright test, or use the Playwright MCP tools for interactive testing.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -241,7 +241,7 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_generate_report',
     description:
-      'Aggregate all checker results into a graded QA report (A-F). Shows 13 category scores, prioritized bug list with fix suggestions, overall score out of 100.',
+      'Aggregate all checker results into a graded QA report (A-F). Shows category scores, prioritized bug list with fix suggestions, overall score out of 100. Supports multiple export formats: markdown (default), json, sarif (for GitHub code scanning), junit (for CI/CD).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -252,6 +252,12 @@ export const tools: Tool[] = [
         results: {
           type: 'string',
           description: 'JSON string of all CheckerResult arrays from previous checks',
+        },
+        format: {
+          type: 'string',
+          enum: ['markdown', 'json', 'sarif', 'junit'],
+          description: 'Output format: markdown (default human-readable), json (structured), sarif (GitHub code scanning), junit (CI/CD XML)',
+          default: 'markdown',
         },
       },
       required: ['plugin_path', 'results'],
@@ -271,6 +277,110 @@ export const tools: Tool[] = [
         site_url: {
           type: 'string',
           description: 'Optional Local WP site URL for live checks (REST, AJAX, DB, browser)',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── Phase 2: Advanced Checks ──────────────────────────────────
+  {
+    name: 'wppqa_check_wporg_ready',
+    description:
+      'WordPress.org submission readiness check: unique prefixing on functions/classes/constants, ABSPATH guards, readme.txt validation, dev files detection, bundled core libraries, GPL license, text domain consistency, external resources, custom update checkers, obfuscated code. Returns a confidence score (0-100%) for "will it pass review?".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_check_security',
+    description:
+      'Deep security analysis beyond basic patterns: input-to-output taint tracing (XSS), nonce chain verification (CSRF), context-appropriate escaping validation, file upload security, $_SERVER["REQUEST_URI"] XSS, object injection via unserialize(), open redirect detection, AJAX handler access control, REST API broken access control, SQL injection patterns, dangerous PHP functions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_check_a11y',
+    description:
+      'Accessibility audit (WCAG 2.1 AA): form label associations, image alt attributes, ARIA role correctness, focus management in JS (modal focus trapping), color contrast in CSS, keyboard navigation support, screen reader text for icon-only buttons. Based on European Accessibility Act requirements.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_check_conflicts',
+    description:
+      'Plugin conflict detection: unprefixed custom hooks, global PHP variable namespace collisions, generic CSS class names (.container, .wrapper, .title), JavaScript global pollution, REST API namespace conflicts, high-risk function name collisions, aggressive hook priorities. Identifies patterns that commonly cause issues when multiple plugins are active.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── Phase 2.5: Gap Analysis & Audit ──────────────────────────────
+  {
+    name: 'wppqa_analyze_gaps',
+    description:
+      'Analyze a plugin for missing features and best practices. Uses conditional rules ("if you have CPTs, you should have REST API") and unconditional rules ("every plugin needs uninstall cleanup"). Returns a prioritized gap list with maturity scoring per feature area (Data Model, API Layer, Admin UI, Block Editor, Lifecycle, Extensibility, Integrations, Automation).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_audit_plugin',
+    description:
+      'Complete plugin audit: scan features, analyze gaps (what\'s missing), run all code quality checks, and produce a unified report. Combines gap analysis (conditional/unconditional rules, maturity scoring) + code quality (static analysis, security, a11y, conflicts, i18n, compat, performance, UX, templates, wporg-ready). Returns one comprehensive report with inventory, maturity, gaps, code issues, and prioritized action items. The definitive "is this plugin ready?" answer.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        site_url: {
+          type: 'string',
+          description: 'Optional Local WP site URL for live checks (REST, AJAX, DB, browser)',
+        },
+        format: {
+          type: 'string',
+          enum: ['markdown', 'json'],
+          description: 'Output format: markdown (default human-readable) or json (structured)',
+          default: 'markdown',
         },
       },
       required: ['plugin_path'],

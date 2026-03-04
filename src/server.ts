@@ -1,6 +1,6 @@
 /**
- * WP Plugin QA MCP Server - Main Server (v1.0.0)
- * 16 tools for comprehensive WordPress plugin quality assurance.
+ * WP Plugin QA MCP Server - Main Server (v1.2.0)
+ * 22 tools for comprehensive WordPress plugin quality assurance.
  * Note: No shell commands used. All checks are static analysis or HTTP-based.
  */
 
@@ -24,8 +24,13 @@ import { checkTemplates } from './template-checker.js';
 import { checkCompat } from './compat-checker.js';
 import { checkI18n } from './i18n-checker.js';
 import { checkPerformance } from './perf-checker.js';
-import { buildReport, formatReport } from './report-builder.js';
+import { buildReport, formatReport, exportJson, exportSarif, exportJunit, buildAuditReport, formatAuditReport } from './report-builder.js';
 import { analyzeCompetitors, formatCompetitiveReport } from './competitive-analyzer.js';
+import { checkWpOrgReady } from './wporg-checker.js';
+import { checkSecurity } from './security-checker.js';
+import { checkAccessibility } from './a11y-checker.js';
+import { checkConflicts } from './conflict-detector.js';
+import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -36,7 +41,7 @@ export class WpPluginQaServer {
     this.server = new Server(
       {
         name: 'wp-plugin-qa-mcp-server',
-        version: '1.0.0',
+        version: '1.2.0',
       },
       {
         capabilities: {
@@ -119,6 +124,7 @@ export class WpPluginQaServer {
             return this.handleGenerateReport(
               toolArgs.plugin_path as string,
               toolArgs.results as string,
+              toolArgs.format as string | undefined,
             );
 
           case 'wppqa_run_automated_qa':
@@ -132,6 +138,28 @@ export class WpPluginQaServer {
               toolArgs.plugin_path as string,
               toolArgs.search_keywords as string | undefined,
               toolArgs.max_competitors as number | undefined,
+            );
+
+          case 'wppqa_check_wporg_ready':
+            return this.handleCheckWpOrgReady(toolArgs.plugin_path as string);
+
+          case 'wppqa_check_security':
+            return this.handleCheckSecurity(toolArgs.plugin_path as string);
+
+          case 'wppqa_check_a11y':
+            return this.handleCheckA11y(toolArgs.plugin_path as string);
+
+          case 'wppqa_check_conflicts':
+            return this.handleCheckConflicts(toolArgs.plugin_path as string);
+
+          case 'wppqa_analyze_gaps':
+            return this.handleAnalyzeGaps(toolArgs.plugin_path as string);
+
+          case 'wppqa_audit_plugin':
+            return await this.handleAuditPlugin(
+              toolArgs.plugin_path as string,
+              toolArgs.site_url as string | undefined,
+              toolArgs.format as string | undefined,
             );
 
           default:
@@ -259,7 +287,7 @@ export class WpPluginQaServer {
     }
   }
 
-  private handleGenerateReport(pluginPath: string, resultsJson: string): CallToolResult {
+  private handleGenerateReport(pluginPath: string, resultsJson: string, format?: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     if (!resultsJson) return this.errorResult('results JSON is required');
 
@@ -271,7 +299,18 @@ export class WpPluginQaServer {
         manifest.header.version,
         results,
       );
-      return this.successResult(formatReport(report));
+
+      switch (format) {
+        case 'json':
+          return this.successResult(exportJson(report));
+        case 'sarif':
+          return this.successResult(exportSarif(report));
+        case 'junit':
+          return this.successResult(exportJunit(report));
+        case 'markdown':
+        default:
+          return this.successResult(formatReport(report));
+      }
     } catch (e) {
       return this.errorResult(`Invalid results JSON: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -292,6 +331,10 @@ export class WpPluginQaServer {
     allResults.push(checkCompat(pluginPath));
     allResults.push(checkUx(pluginPath));
     allResults.push(checkPerformance(pluginPath));
+    allResults.push(checkWpOrgReady(pluginPath));
+    allResults.push(checkSecurity(pluginPath));
+    allResults.push(checkAccessibility(pluginPath));
+    allResults.push(checkConflicts(pluginPath));
 
     // Group B: Live site checks (only if site_url provided)
     if (siteUrl) {
@@ -335,6 +378,88 @@ export class WpPluginQaServer {
     let output = markdown;
     output += `\n${'='.repeat(60)}\nJSON: ${JSON.stringify(report)}\n`;
     return this.successResult(output);
+  }
+
+  private handleCheckWpOrgReady(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkWpOrgReady(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckSecurity(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkSecurity(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckA11y(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkAccessibility(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckConflicts(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkConflicts(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleAnalyzeGaps(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const manifest = scanPlugin(pluginPath);
+    const gapResult = analyzeGaps(manifest);
+    const markdown = formatGapAnalysis(gapResult);
+    let output = markdown;
+    output += `\n${'='.repeat(50)}\nJSON: ${JSON.stringify(gapResult)}\n`;
+    return this.successResult(output);
+  }
+
+  private async handleAuditPlugin(pluginPath: string, siteUrl?: string, format?: string): Promise<CallToolResult> {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+
+    // Step 1: Scan plugin
+    const manifest = scanPlugin(pluginPath);
+
+    // Step 2: Gap analysis
+    const gapResult = analyzeGaps(manifest);
+
+    // Step 3: Run all code quality checks
+    const allResults: CheckerResult[] = [];
+    resetWpCliCache();
+    allResults.push(checkStatic(pluginPath, siteUrl));
+    allResults.push(checkTemplates(pluginPath));
+    allResults.push(checkI18n(pluginPath));
+    allResults.push(checkCompat(pluginPath));
+    allResults.push(checkUx(pluginPath));
+    allResults.push(checkPerformance(pluginPath));
+    allResults.push(checkWpOrgReady(pluginPath));
+    allResults.push(checkSecurity(pluginPath));
+    allResults.push(checkAccessibility(pluginPath));
+    allResults.push(checkConflicts(pluginPath));
+
+    // Live site checks
+    if (siteUrl) {
+      allResults.push(await checkApi(manifest, siteUrl));
+      allResults.push(await checkDatabase(manifest, siteUrl));
+      allResults.push(checkBrowser(manifest, siteUrl));
+    }
+
+    // Step 4: Build QA report
+    const qaReport = buildReport(
+      manifest.header.name || manifest.header.slug,
+      manifest.header.version,
+      allResults,
+    );
+
+    // Step 5: Build unified audit report
+    const auditReport = buildAuditReport(gapResult, qaReport);
+
+    // Step 6: Format output
+    if (format === 'json') {
+      return this.successResult(JSON.stringify(auditReport, null, 2));
+    }
+
+    return this.successResult(formatAuditReport(auditReport));
   }
 
   private formatCheckerResult(result: CheckerResult): CallToolResult {
@@ -408,6 +533,6 @@ export class WpPluginQaServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('WP Plugin QA MCP Server v1.0.0 running on stdio');
+    console.error('WP Plugin QA MCP Server v1.2.0 running on stdio');
   }
 }
