@@ -31,6 +31,7 @@ import { checkSecurity } from './security-checker.js';
 import { checkAccessibility } from './a11y-checker.js';
 import { checkConflicts } from './conflict-detector.js';
 import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
+import { analyzeExpectations, formatCategoryAnalysis } from './category-expectations.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -407,10 +408,16 @@ export class WpPluginQaServer {
   private handleAnalyzeGaps(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const manifest = scanPlugin(pluginPath);
+
+    // Layer 1: Technical gaps (WordPress best practices)
     const gapResult = analyzeGaps(manifest);
-    const markdown = formatGapAnalysis(gapResult);
-    let output = markdown;
-    output += `\n${'='.repeat(50)}\nJSON: ${JSON.stringify(gapResult)}\n`;
+    let output = formatGapAnalysis(gapResult);
+
+    // Layer 2: Customer expectation gaps (industry benchmarks)
+    const categoryResult = analyzeExpectations(manifest);
+    output += '\n\n' + formatCategoryAnalysis(categoryResult);
+
+    output += `\n${'='.repeat(50)}\nJSON: ${JSON.stringify({ technicalGaps: gapResult, customerExpectations: categoryResult })}\n`;
     return this.successResult(output);
   }
 
@@ -451,15 +458,20 @@ export class WpPluginQaServer {
       allResults,
     );
 
-    // Step 5: Build unified audit report
+    // Step 5: Customer expectation analysis (industry benchmarks)
+    const categoryResult = analyzeExpectations(manifest);
+
+    // Step 6: Build unified audit report
     const auditReport = buildAuditReport(gapResult, qaReport);
 
-    // Step 6: Format output
+    // Step 7: Format output
     if (format === 'json') {
-      return this.successResult(JSON.stringify(auditReport, null, 2));
+      return this.successResult(JSON.stringify({ audit: auditReport, customerExpectations: categoryResult }, null, 2));
     }
 
-    return this.successResult(formatAuditReport(auditReport));
+    let output = formatAuditReport(auditReport);
+    output += '\n\n' + formatCategoryAnalysis(categoryResult);
+    return this.successResult(output);
   }
 
   private formatCheckerResult(result: CheckerResult): CallToolResult {
