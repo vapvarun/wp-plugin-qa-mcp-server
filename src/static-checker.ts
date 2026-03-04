@@ -28,20 +28,19 @@ export function checkStatic(pluginPath: string, siteUrl?: string): CheckerResult
   issues.push(...checkDeadCode(phpFiles, fileContents, pluginPath));
   issues.push(...checkDuplicateFunctions(phpFiles, fileContents, pluginPath));
   issues.push(...checkNamingConsistency(phpFiles, fileContents, pluginPath));
-  issues.push(...checkSecurityPatterns(phpFiles, fileContents, pluginPath));
   issues.push(...checkUndefinedFunctions(phpFiles, fileContents, pluginPath, siteUrl));
   const debugIssues = checkDebugStatements(phpFiles, fileContents, pluginPath);
   const secretIssues = checkHardcodedSecrets(phpFiles, fileContents, pluginPath);
   const lfiIssues = checkLocalFileInclusion(phpFiles, fileContents, pluginPath);
-  const adminPostIssues = checkAdminPostHandlers(phpFiles, fileContents, pluginPath);
   const ssrfIssues = checkSsrfPatterns(phpFiles, fileContents, pluginPath);
 
   issues.push(
-    ...debugIssues, ...secretIssues, ...lfiIssues,
-    ...adminPostIssues, ...ssrfIssues,
+    ...debugIssues, ...secretIssues, ...lfiIssues, ...ssrfIssues,
   );
 
-  // Removed from this checker (now in specialized checkers):
+  // Checks moved to specialized checkers:
+  // - Security patterns (XSS, unsanitized input) → security-checker.ts (checkTaintedOutput)
+  // - admin_post nonce verification → security-checker.ts (checkAdminPostAccessControl)
   // - ABSPATH guard → wporg-checker.ts (checkAbspathGuards)
   // - Dangerous functions (eval, exec, etc.) → security-checker.ts (checkDangerousFunctions)
   // - SQL injection patterns → security-checker.ts (checkSqlInjection)
@@ -53,12 +52,10 @@ export function checkStatic(pluginPath: string, siteUrl?: string): CheckerResult
     { name: 'dead-code', issues: issues.filter(i => i.code === 'dead-code') },
     { name: 'duplicates', issues: issues.filter(i => i.code === 'duplicate-function') },
     { name: 'naming', issues: issues.filter(i => i.code === 'naming-inconsistency') },
-    { name: 'security', issues: issues.filter(i => i.code === 'unsanitized-input' || i.code === 'xss-risk') },
     { name: 'undefined', issues: issues.filter(i => i.code === 'undefined-function') },
     { name: 'debug', issues: debugIssues },
     { name: 'secrets', issues: secretIssues },
     { name: 'lfi', issues: lfiIssues },
-    { name: 'admin-post', issues: adminPostIssues },
     { name: 'ssrf', issues: ssrfIssues },
   ];
 
@@ -244,87 +241,7 @@ function checkNamingConsistency(phpFiles: string[], contents: Map<string, string
   return issues;
 }
 
-function checkSecurityPatterns(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-  const sanitizationPattern = /sanitize_|absint|intval|wp_unslash|esc_|wp_kses|array_map|map_deep|wp_verify_nonce|check_ajax_referer|check_admin_referer|wp_check_password/;
-
-  for (const file of phpFiles) {
-    const content = contents.get(file) || '';
-    const rel = relativePath(file, pluginPath);
-    const lines = content.split('\n');
-
-    // Direct superglobal usage without sanitization
-    const unsafeInput = /\$_(POST|GET|REQUEST)\s*\[\s*['"][^'"]+['"]\s*\]/g;
-    let match;
-    while ((match = unsafeInput.exec(content)) !== null) {
-      const lineNum = getLineNumber(content, match.index);
-      const lineContent = lines[lineNum - 1] || '';
-
-      // Skip phpcs:ignore comments
-      if (/phpcs:ignore/.test(lineContent)) continue;
-
-      // Skip inside isset() or empty() — these are existence checks, not data usage
-      if (/\b(?:isset|empty)\s*\(/.test(lineContent) && !/=/.test(lineContent.split(/isset|empty/)[0])) continue;
-
-      // Check surrounding 3 lines (before and after) for sanitization context
-      const contextStart = Math.max(0, lineNum - 4);
-      const contextEnd = Math.min(lines.length - 1, lineNum + 2);
-      const surroundingContext = lines.slice(contextStart, contextEnd + 1).join('\n');
-
-      // Skip if sanitization found in surrounding lines
-      if (sanitizationPattern.test(surroundingContext)) continue;
-
-      // Skip if nonce verification is in surrounding context (indicates validated handler)
-      if (/wp_verify_nonce|check_ajax_referer|check_admin_referer/.test(surroundingContext)) continue;
-
-      issues.push({
-        id: generateTestId('code-quality'),
-        category: 'code-quality',
-        severity: 'high',
-        type: 'error',
-        title: `Unsanitized ${match[1]} input`,
-        message: `Direct $_{${match[1]}} usage without sanitization`,
-        file: rel,
-        line: lineNum,
-        code: 'unsanitized-input',
-        fix: 'Wrap with sanitize_text_field() or appropriate sanitization function',
-      });
-    }
-
-    // Unescaped echo of variables
-    const unsafeEcho = /echo\s+\$(?!this)/g;
-    while ((match = unsafeEcho.exec(content)) !== null) {
-      const lineNum = getLineNumber(content, match.index);
-      const lineContent = lines[lineNum - 1] || '';
-
-      // Skip phpcs:ignore comments
-      if (/phpcs:ignore/.test(lineContent)) continue;
-
-      // Check surrounding 3 lines for escaping
-      const contextStart = Math.max(0, lineNum - 4);
-      const contextEnd = Math.min(lines.length - 1, lineNum + 2);
-      const surroundingContext = lines.slice(contextStart, contextEnd + 1).join('\n');
-
-      if (!/esc_html|esc_attr|esc_url|wp_kses|intval|absint|number_format/.test(lineContent) &&
-          !/esc_html|esc_attr|esc_url|wp_kses/.test(surroundingContext)) {
-        issues.push({
-          id: generateTestId('code-quality'),
-          category: 'code-quality',
-          severity: 'high',
-          type: 'warning',
-          title: 'Unescaped output',
-          message: 'Variable echoed without escaping function',
-          file: rel,
-          line: lineNum,
-          code: 'xss-risk',
-          fix: 'Use esc_html(), esc_attr(), or esc_url() before output',
-        });
-      }
-    }
-  }
-
-  return issues;
-}
+// REMOVED: checkSecurityPatterns — now in security-checker.ts (checkTaintedOutput covers XSS/unsanitized input)
 
 /**
  * Discover all defined functions from a running WordPress install via WP-CLI.
@@ -804,57 +721,7 @@ function checkLocalFileInclusion(phpFiles: string[], contents: Map<string, strin
 // REMOVED: checkUnsafeSqlQueries — now in security-checker.ts (checkSqlInjection)
 // REMOVED: checkUnserializeOnDbData — now in security-checker.ts (checkObjectInjection)
 
-function checkAdminPostHandlers(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-
-  for (const file of phpFiles) {
-    const content = contents.get(file) || '';
-    const rel = relativePath(file, pluginPath);
-
-    // Find admin_post_ and admin_post_nopriv_ action registrations
-    const pattern = /add_action\s*\(\s*['"]admin_post_(?:nopriv_)?([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|function\s*\()/g;
-    let match;
-
-    while ((match = pattern.exec(content)) !== null) {
-      const action = match[1];
-      const callback = match[2] || match[3];
-      const isClosure = !match[2] && !match[3];
-
-      let hasNonceCheck = false;
-
-      if (isClosure) {
-        const closureEnd = Math.min(match.index + 2000, content.length);
-        const closureBody = content.substring(match.index, closureEnd);
-        hasNonceCheck = /check_admin_referer|wp_verify_nonce/.test(closureBody);
-      } else if (callback) {
-        // Find the callback function
-        const funcPattern = new RegExp(`function\\s+${callback}\\s*\\([^)]*\\)\\s*\\{`, 'g');
-        for (const f of phpFiles) {
-          const c = contents.get(f) || '';
-          const funcMatch = funcPattern.exec(c);
-          if (funcMatch) {
-            const funcEnd = Math.min(funcMatch.index + 2000, c.length);
-            const funcBody = c.substring(funcMatch.index, funcEnd);
-            hasNonceCheck = /check_admin_referer|wp_verify_nonce/.test(funcBody);
-            break;
-          }
-        }
-      }
-
-      if (!hasNonceCheck) {
-        issues.push({
-          id: generateTestId('code-quality'), category: 'code-quality', severity: 'critical', type: 'error',
-          title: `admin_post handler "${action}" missing nonce verification`,
-          message: `admin_post_${action} handler has no check_admin_referer() or wp_verify_nonce() — CSRF risk`,
-          file: rel, line: getLineNumber(content, match.index), code: 'admin-post-no-nonce',
-          fix: 'Add check_admin_referer("action_name", "nonce_field") at the start of the handler',
-        });
-      }
-    }
-  }
-
-  return issues;
-}
+// REMOVED: checkAdminPostHandlers — moved to security-checker.ts (checkAdminPostAccessControl)
 
 function checkSsrfPatterns(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
   const issues: CheckerIssue[] = [];

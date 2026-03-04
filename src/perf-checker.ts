@@ -27,12 +27,12 @@ export function checkPerformance(pluginPath: string): CheckerResult {
   issues.push(...checkRemoteRequestTimeouts(phpFiles, fileContents, pluginPath));
   issues.push(...checkQueryOptimizations(phpFiles, fileContents, pluginPath));
   issues.push(...checkInlineScripts(phpFiles, fileContents, pluginPath));
-  issues.push(...checkAutoloadOptions(phpFiles, fileContents, pluginPath));
+  // Autoload options check moved to db-checker.ts (checkAutoloadOptions)
 
   return {
     category: 'performance',
     issues,
-    passed: Math.max(0, 10 - issues.filter(i => i.type === 'error').length),
+    passed: Math.max(0, 9 - issues.filter(i => i.type === 'error').length),
     failed: issues.filter(i => i.type === 'error').length,
     skipped: 0,
     duration: Date.now() - startTime,
@@ -351,37 +351,4 @@ function checkInlineScripts(phpFiles: string[], contents: Map<string, string>, p
   return issues;
 }
 
-function checkAutoloadOptions(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-
-  for (const file of phpFiles) {
-    const content = contents.get(file) || '';
-    const rel = relativePath(file, pluginPath);
-
-    // update_option with autoload defaulting to yes (large data)
-    const updateOptionPattern = /update_option\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\$\w+)/g;
-    let match;
-    while ((match = updateOptionPattern.exec(content)) !== null) {
-      const optionName = match[1];
-      const contextAfter = content.substring(match.index, Math.min(match.index + 200, content.length));
-
-      // If storing what looks like large data (arrays, objects, json) without explicit autoload=no
-      if (!/,\s*['"](?:no|false)['"]/.test(contextAfter) && !/autoload/.test(contextAfter)) {
-        // Check if the value appears to be large data
-        const valueBefore = content.substring(Math.max(0, match.index - 500), match.index);
-        if (/json_encode|serialize|array\s*\(|wp_json_encode/.test(valueBefore) ||
-            /log|cache|data|history|queue/.test(optionName)) {
-          issues.push({
-            id: generateTestId('performance'), category: 'performance', severity: 'medium', type: 'warning',
-            title: `Option "${optionName}" may autoload large data`,
-            message: 'update_option() defaults to autoload=yes. Large data should set autoload to "no".',
-            file: rel, line: getLineNumber(content, match.index), code: 'autoload-large-option',
-            fix: "Pass 'no' as third argument: update_option('name', $value, 'no')",
-          });
-        }
-      }
-    }
-  }
-
-  return issues;
-}
+// REMOVED: checkAutoloadOptions — now in db-checker.ts (avoids duplicate check)

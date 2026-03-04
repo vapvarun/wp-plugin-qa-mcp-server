@@ -55,28 +55,26 @@ export function checkWpOrgReady(pluginPath: string): CheckerResult {
   // 6. Check license header
   issues.push(...checkLicense(pluginPath, phpFiles));
 
-  // 7. Check text domain consistency
-  issues.push(...checkTextDomainConsistency(pluginPath, slug, phpFiles));
+  // 7. Text domain consistency — handled by i18n-checker.ts (checkTextDomainConsistency)
 
-  // 8. Check for external resource loading
+  // 7. Check for external resource loading
   issues.push(...checkExternalResources(pluginPath, phpFiles));
 
-  // 9. Check for custom update checkers
+  // 8. Check for custom update checkers
   issues.push(...checkCustomUpdateCheckers(pluginPath, phpFiles));
 
-  // 10. Check plugin file matches slug
+  // 9. Check plugin file matches slug
   issues.push(...checkPluginFileNaming(pluginPath, slug));
 
-  // 11. Check for direct file access
-  issues.push(...checkDirectFileAccess(pluginPath, phpFiles));
+  // 10. Direct file access — merged into checkAbspathGuards above
 
-  // 12. Check for obfuscated code
+  // 10. Check for obfuscated code
   issues.push(...checkObfuscatedCode(pluginPath, phpFiles));
 
   // Calculate confidence score
   const errors = issues.filter(i => i.type === 'error').length;
   const warnings = issues.filter(i => i.type === 'warning').length;
-  const totalChecks = 12;
+  const totalChecks = 10;
   const passedChecks = totalChecks - Math.min(totalChecks, errors);
   const deductions = errors * 10 + warnings * 3;
   const confidence = Math.max(0, Math.min(100, 100 - deductions));
@@ -190,6 +188,7 @@ function isInsideClass(content: string, offset: number): boolean {
 function checkAbspathGuards(pluginPath: string, phpFiles: string[]): CheckerIssue[] {
   const issues: CheckerIssue[] = [];
   let missingCount = 0;
+  let inputProcessingCount = 0;
   const samples: string[] = [];
 
   for (const file of phpFiles) {
@@ -215,20 +214,26 @@ function checkAbspathGuards(pluginPath: string, phpFiles: string[]): CheckerIssu
 
     // Check for ABSPATH guard
     const hasAbspath = /defined\s*\(\s*['"]ABSPATH['"]\s*\)/.test(content) ||
+                       /defined\s*\(\s*['"]DOING_AJAX['"]\s*\)/.test(content) ||
                        /ABSPATH/.test(content.split('\n').slice(0, 10).join('\n'));
     if (!hasAbspath) {
       missingCount++;
-      if (samples.length < 5) samples.push(rel);
+      // Escalate: files processing user input without guard are higher risk
+      const processesInput = /\$_GET|\$_POST|\$_REQUEST|\$_FILES/.test(content);
+      if (processesInput) inputProcessingCount++;
+      if (samples.length < 5) samples.push(rel + (processesInput ? ' (processes input!)' : ''));
     }
   }
 
   if (missingCount > 0) {
+    // Severity escalated if files process user input without guard
+    const hasInputRisk = inputProcessingCount > 0;
     issues.push({
       id: generateTestId('wporg-ready'),
       category: 'wporg-ready' as any,
-      severity: missingCount > 5 ? 'high' : 'medium',
-      type: missingCount > 5 ? 'error' : 'warning',
-      title: `${missingCount} PHP files missing ABSPATH guard`,
+      severity: hasInputRisk ? 'high' : (missingCount > 5 ? 'high' : 'medium'),
+      type: hasInputRisk || missingCount > 5 ? 'error' : 'warning',
+      title: `${missingCount} PHP files missing ABSPATH guard${inputProcessingCount > 0 ? ` (${inputProcessingCount} process user input)` : ''}`,
       message: `Files without "defined( 'ABSPATH' )" check: ${samples.join(', ')}${missingCount > 5 ? ` and ${missingCount - 5} more` : ''}`,
       file: '', line: 0, code: 'missing-abspath-guard',
       fix: 'Add to top of each PHP file: if ( ! defined( \'ABSPATH\' ) ) exit;',
@@ -450,56 +455,7 @@ function checkLicense(pluginPath: string, phpFiles: string[]): CheckerIssue[] {
   return issues;
 }
 
-function checkTextDomainConsistency(pluginPath: string, slug: string, phpFiles: string[]): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-  const wrongDomains: { domain: string; file: string; line: number }[] = [];
-
-  // Find the declared text domain from plugin header
-  let declaredDomain = slug;
-  for (const file of phpFiles) {
-    const content = safeReadFile(file);
-    const match = content.match(/Text Domain:\s*(\S+)/i);
-    if (match) {
-      declaredDomain = match[1];
-      break;
-    }
-  }
-
-  for (const file of phpFiles) {
-    const content = safeReadFile(file);
-    if (!content) continue;
-    const rel = relativePath(file, pluginPath);
-    const lines = content.split('\n');
-
-    for (let i = 0; i < lines.length; i++) {
-      // Match i18n function calls with text domain
-      const i18nPattern = /(?:__|_e|_n|_x|_ex|_nx|esc_html__|esc_html_e|esc_attr__|esc_attr_e)\s*\([^)]*['"]([a-z0-9-]+)['"]\s*\)/g;
-      let match;
-      while ((match = i18nPattern.exec(lines[i])) !== null) {
-        const domain = match[1];
-        if (domain !== declaredDomain && domain !== 'default') {
-          wrongDomains.push({ domain, file: rel, line: i + 1 });
-        }
-      }
-    }
-  }
-
-  if (wrongDomains.length > 0) {
-    const uniqueDomains = [...new Set(wrongDomains.map(d => d.domain))];
-    issues.push({
-      id: generateTestId('wporg-ready'),
-      category: 'wporg-ready' as any,
-      severity: 'medium', type: 'warning',
-      title: `${wrongDomains.length} text domain mismatches`,
-      message: `Expected "${declaredDomain}", found: ${uniqueDomains.join(', ')} in ${wrongDomains.length} locations`,
-      file: wrongDomains[0]?.file || '', line: wrongDomains[0]?.line || 0,
-      code: 'text-domain-mismatch',
-      fix: `Replace all text domains with "${declaredDomain}"`,
-    });
-  }
-
-  return issues;
-}
+// REMOVED: checkTextDomainConsistency — now in i18n-checker.ts (avoids duplicate check)
 
 function checkExternalResources(pluginPath: string, phpFiles: string[]): CheckerIssue[] {
   const issues: CheckerIssue[] = [];
@@ -633,40 +589,7 @@ function checkPluginFileNaming(pluginPath: string, slug: string): CheckerIssue[]
   return issues;
 }
 
-function checkDirectFileAccess(pluginPath: string, phpFiles: string[]): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-  let directAccessCount = 0;
-
-  for (const file of phpFiles) {
-    const content = safeReadFile(file);
-    if (!content) continue;
-
-    // Files that accept direct access (AJAX handlers, REST endpoints, etc.)
-    if (/\$_GET|\$_POST|\$_REQUEST|\$_FILES/.test(content)) {
-      // This file processes input — it MUST have an ABSPATH or similar guard
-      const hasGuard = /defined\s*\(\s*['"]ABSPATH['"]\s*\)/.test(content) ||
-                       /defined\s*\(\s*['"]WP_UNINSTALL_PLUGIN['"]\s*\)/.test(content) ||
-                       /defined\s*\(\s*['"]DOING_AJAX['"]\s*\)/.test(content);
-      if (!hasGuard) {
-        directAccessCount++;
-      }
-    }
-  }
-
-  if (directAccessCount > 0) {
-    issues.push({
-      id: generateTestId('wporg-ready'),
-      category: 'wporg-ready' as any,
-      severity: 'high', type: 'error',
-      title: `${directAccessCount} files process input without access guard`,
-      message: 'Files that process $_GET/$_POST/$_REQUEST must check for ABSPATH or similar constant',
-      file: '', line: 0, code: 'direct-access-risk',
-      fix: 'Add defined( "ABSPATH" ) check at the top of each file',
-    });
-  }
-
-  return issues;
-}
+// REMOVED: checkDirectFileAccess — merged into checkAbspathGuards (severity escalated for input-processing files)
 
 function checkObfuscatedCode(pluginPath: string, phpFiles: string[]): CheckerIssue[] {
   const issues: CheckerIssue[] = [];

@@ -28,9 +28,10 @@ export function checkSecurity(pluginPath: string): CheckerResult {
   issues.push(...checkRestAccessControl(pluginPath, phpFiles));
   issues.push(...checkSqlInjection(pluginPath, phpFiles));
   issues.push(...checkDangerousFunctions(pluginPath, phpFiles));
+  issues.push(...checkAdminPostAccessControl(pluginPath, phpFiles));
 
   const errors = issues.filter(i => i.type === 'error').length;
-  const totalChecks = 11;
+  const totalChecks = 12;
 
   return {
     category: 'security',
@@ -548,6 +549,59 @@ function checkDangerousFunctions(pluginPath: string, phpFiles: string[]): Checke
           });
           break;
         }
+      }
+    }
+  }
+  return issues;
+}
+
+/**
+ * Check admin_post_ handlers for missing nonce/CSRF verification.
+ * Moved from static-checker.ts — this is a security concern (CSRF).
+ */
+function checkAdminPostAccessControl(pluginPath: string, phpFiles: string[]): CheckerIssue[] {
+  const issues: CheckerIssue[] = [];
+
+  for (const file of phpFiles) {
+    const content = safeReadFile(file);
+    if (!content) continue;
+    const rel = relativePath(file, pluginPath);
+
+    const pattern = /add_action\s*\(\s*['"]admin_post_(?:nopriv_)?([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|function\s*\()/g;
+    let match;
+
+    while ((match = pattern.exec(content)) !== null) {
+      const action = match[1];
+      const callback = match[2] || match[3];
+      const isClosure = !match[2] && !match[3];
+
+      let hasNonceCheck = false;
+
+      if (isClosure) {
+        const closureBody = content.substring(match.index, Math.min(match.index + 2000, content.length));
+        hasNonceCheck = /check_admin_referer|wp_verify_nonce/.test(closureBody);
+      } else if (callback) {
+        const funcPattern = new RegExp(`function\\s+${callback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`);
+        for (const f of phpFiles) {
+          const c = safeReadFile(f);
+          if (!c) continue;
+          const funcIdx = c.search(funcPattern);
+          if (funcIdx >= 0) {
+            const funcBody = c.substring(funcIdx, Math.min(funcIdx + 2000, c.length));
+            hasNonceCheck = /check_admin_referer|wp_verify_nonce/.test(funcBody);
+            break;
+          }
+        }
+      }
+
+      if (!hasNonceCheck) {
+        issues.push({
+          id: generateTestId('security'), category: 'security', severity: 'critical', type: 'error',
+          title: `admin_post handler "${action}" missing nonce verification (CSRF)`,
+          message: `admin_post_${action} handler has no check_admin_referer() or wp_verify_nonce()`,
+          file: rel, line: getLineNumber(content, match.index), code: 'admin-post-no-nonce',
+          fix: 'Add check_admin_referer("action_name", "nonce_field") at the start of the handler',
+        });
       }
     }
   }
