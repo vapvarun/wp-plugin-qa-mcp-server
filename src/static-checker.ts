@@ -1,13 +1,15 @@
 /**
  * WP Plugin QA MCP Server - Static Code Checker
- * Dead code, duplicates, undefined functions, naming consistency, security patterns.
+ * Dead code, duplicates, undefined functions, naming consistency, debug statements, secrets, SSRF.
+ * Security-specific checks (dangerous functions, SQL injection, object injection, ABSPATH guards)
+ * are handled by security-checker.ts, wporg-checker.ts, and perf-checker.ts respectively.
  * Note: This is a standalone MCP server - no external exec dependencies.
  */
 
 import { readFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
-import type { CheckerResult, CheckerIssue, Severity } from './types.js';
+import type { CheckerResult, CheckerIssue } from './types.js';
 import { findPhpFiles, getLineNumber, relativePath, generateTestId } from './shared-utils.js';
 
 export function checkStatic(pluginPath: string, siteUrl?: string): CheckerResult {
@@ -22,27 +24,29 @@ export function checkStatic(pluginPath: string, siteUrl?: string): CheckerResult
     } catch { /* skip */ }
   }
 
+  // Core static analysis (unique to this checker)
   issues.push(...checkDeadCode(phpFiles, fileContents, pluginPath));
   issues.push(...checkDuplicateFunctions(phpFiles, fileContents, pluginPath));
   issues.push(...checkNamingConsistency(phpFiles, fileContents, pluginPath));
   issues.push(...checkSecurityPatterns(phpFiles, fileContents, pluginPath));
   issues.push(...checkUndefinedFunctions(phpFiles, fileContents, pluginPath, siteUrl));
-  const abspathIssues = checkAbspathGuard(phpFiles, fileContents, pluginPath);
   const debugIssues = checkDebugStatements(phpFiles, fileContents, pluginPath);
-  const dangerousIssues = checkDangerousFunctions(phpFiles, fileContents, pluginPath);
   const secretIssues = checkHardcodedSecrets(phpFiles, fileContents, pluginPath);
-  const fileInclusionIssues = checkDirectFileInclusion(phpFiles, fileContents, pluginPath);
-  const sqlIssues = checkUnsafeSqlQueries(phpFiles, fileContents, pluginPath);
-  const unserializeIssues = checkUnserializeOnDbData(phpFiles, fileContents, pluginPath);
+  const lfiIssues = checkLocalFileInclusion(phpFiles, fileContents, pluginPath);
   const adminPostIssues = checkAdminPostHandlers(phpFiles, fileContents, pluginPath);
   const ssrfIssues = checkSsrfPatterns(phpFiles, fileContents, pluginPath);
-  const dbLoopIssues = checkDbQueryInLoop(phpFiles, fileContents, pluginPath);
 
   issues.push(
-    ...abspathIssues, ...debugIssues, ...dangerousIssues, ...secretIssues,
-    ...fileInclusionIssues, ...sqlIssues, ...unserializeIssues,
-    ...adminPostIssues, ...ssrfIssues, ...dbLoopIssues,
+    ...debugIssues, ...secretIssues, ...lfiIssues,
+    ...adminPostIssues, ...ssrfIssues,
   );
+
+  // Removed from this checker (now in specialized checkers):
+  // - ABSPATH guard → wporg-checker.ts (checkAbspathGuards)
+  // - Dangerous functions (eval, exec, etc.) → security-checker.ts (checkDangerousFunctions)
+  // - SQL injection patterns → security-checker.ts (checkSqlInjection)
+  // - Object injection (unserialize) → security-checker.ts (checkObjectInjection)
+  // - N+1 / DB query in loop → perf-checker.ts (checkN1Queries)
 
   // Count check areas that found errors/warnings (not info), to get meaningful pass/fail
   const checkAreas = [
@@ -51,16 +55,11 @@ export function checkStatic(pluginPath: string, siteUrl?: string): CheckerResult
     { name: 'naming', issues: issues.filter(i => i.code === 'naming-inconsistency') },
     { name: 'security', issues: issues.filter(i => i.code === 'unsanitized-input' || i.code === 'xss-risk') },
     { name: 'undefined', issues: issues.filter(i => i.code === 'undefined-function') },
-    { name: 'abspath', issues: abspathIssues },
     { name: 'debug', issues: debugIssues },
-    { name: 'dangerous', issues: dangerousIssues },
     { name: 'secrets', issues: secretIssues },
-    { name: 'file-inclusion', issues: fileInclusionIssues },
-    { name: 'sql', issues: sqlIssues },
-    { name: 'unserialize', issues: unserializeIssues },
+    { name: 'lfi', issues: lfiIssues },
     { name: 'admin-post', issues: adminPostIssues },
     { name: 'ssrf', issues: ssrfIssues },
-    { name: 'db-loop', issues: dbLoopIssues },
   ];
 
   const failedAreas = checkAreas.filter(a => a.issues.some(i => i.type === 'error' || (i.type === 'warning' && i.severity !== 'low'))).length;
@@ -695,34 +694,7 @@ function checkUndefinedFunctions(phpFiles: string[], contents: Map<string, strin
   return issues;
 }
 
-function checkAbspathGuard(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-
-  for (const file of phpFiles) {
-    const content = contents.get(file) || '';
-    const rel = relativePath(file, pluginPath);
-
-    // Skip files that aren't directly loadable (inside classes/ includes/ etc.)
-    if (rel.includes('vendor/') || rel.includes('node_modules/')) continue;
-
-    // Check if the file has a PHP opening tag and executable code
-    if (/^<\?php/m.test(content) && !rel.includes('index.php')) {
-      const hasAbspathCheck = /defined\s*\(\s*['"]ABSPATH['"]\s*\)|defined\s*\(\s*'WPINC'\s*\)/.test(content);
-      // Only flag main PHP files, not template-like files
-      if (!hasAbspathCheck && /(?:class\s+\w|function\s+\w)/.test(content)) {
-        issues.push({
-          id: generateTestId('code-quality'), category: 'code-quality', severity: 'medium', type: 'warning',
-          title: 'Missing ABSPATH guard',
-          message: 'PHP file lacks direct access protection: defined(\'ABSPATH\') || exit;',
-          file: rel, line: 1, code: 'no-abspath-guard',
-          fix: 'Add: defined(\'ABSPATH\') || exit; after the opening PHP tag',
-        });
-      }
-    }
-  }
-
-  return issues;
-}
+// REMOVED: checkAbspathGuard — now in wporg-checker.ts (checkAbspathGuards)
 
 function checkDebugStatements(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
   const issues: CheckerIssue[] = [];
@@ -762,76 +734,7 @@ function checkDebugStatements(phpFiles: string[], contents: Map<string, string>,
   return issues;
 }
 
-function checkDangerousFunctions(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-
-  const dangerousPatterns: Array<{ pattern: RegExp; name: string; severity: Severity; message: string; fix: string }> = [
-    {
-      pattern: /\bunserialize\s*\(\s*\$_(POST|GET|REQUEST|COOKIE)/g,
-      name: 'unserialize() on user input', severity: 'critical',
-      message: 'unserialize() on user input allows object injection attacks',
-      fix: 'Use json_decode() or wp_unslash() + sanitize instead of unserialize()',
-    },
-    {
-      pattern: /\bextract\s*\(\s*\$_(POST|GET|REQUEST)/g,
-      name: 'extract() on user input', severity: 'critical',
-      message: 'extract() on user input allows variable injection',
-      fix: 'Access superglobal values individually with sanitization',
-    },
-    {
-      pattern: /\beval\s*\(/g,
-      name: 'eval()', severity: 'critical',
-      message: 'eval() executes arbitrary PHP code — severe security risk',
-      fix: 'Refactor to avoid eval(). Use callbacks, switch/match, or dynamic function calls',
-    },
-    {
-      pattern: /\bexec\s*\(\s*\$|system\s*\(\s*\$|passthru\s*\(\s*\$|shell_exec\s*\(\s*\$|popen\s*\(\s*\$/g,
-      name: 'Shell execution with variable', severity: 'critical',
-      message: 'Shell command execution with variable input — command injection risk',
-      fix: 'Avoid shell commands. If necessary, use escapeshellarg() and escapeshellcmd()',
-    },
-    {
-      pattern: /\bfile_get_contents\s*\(\s*\$_(POST|GET|REQUEST)/g,
-      name: 'file_get_contents() on user input', severity: 'critical',
-      message: 'Reading files from user-controlled paths — SSRF/LFI risk',
-      fix: 'Validate and sanitize file paths. Use wp_remote_get() for URLs',
-    },
-    {
-      pattern: /\bwp_redirect\s*\(\s*\$_(POST|GET|REQUEST)/g,
-      name: 'Open redirect', severity: 'high',
-      message: 'wp_redirect() with user-controlled URL — open redirect vulnerability',
-      fix: 'Use wp_safe_redirect() which validates against allowed hosts',
-    },
-    {
-      pattern: /move_uploaded_file\s*\(/g,
-      name: 'Direct file upload', severity: 'high',
-      message: 'Direct file upload handling instead of using WP upload API',
-      fix: 'Use wp_handle_upload() which validates file types and paths',
-    },
-  ];
-
-  for (const file of phpFiles) {
-    const content = contents.get(file) || '';
-    const rel = relativePath(file, pluginPath);
-
-    for (const { pattern, name, severity, message, fix } of dangerousPatterns) {
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
-        const lineNum = getLineNumber(content, match.index);
-        const lineContent = (content.split('\n')[lineNum - 1] || '').trim();
-        if (/^\s*(?:\/\/|\*|#)/.test(lineContent)) continue;
-
-        issues.push({
-          id: generateTestId('code-quality'), category: 'code-quality', severity, type: 'error',
-          title: `Dangerous: ${name}`,
-          message, file: rel, line: lineNum, code: 'dangerous-function', fix,
-        });
-      }
-    }
-  }
-
-  return issues;
-}
+// REMOVED: checkDangerousFunctions — now in security-checker.ts (checkDangerousFunctions)
 
 function checkHardcodedSecrets(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
   const issues: CheckerIssue[] = [];
@@ -874,14 +777,14 @@ function checkHardcodedSecrets(phpFiles: string[], contents: Map<string, string>
   return issues;
 }
 
-function checkDirectFileInclusion(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
+function checkLocalFileInclusion(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
   const issues: CheckerIssue[] = [];
 
   for (const file of phpFiles) {
     const content = contents.get(file) || '';
     const rel = relativePath(file, pluginPath);
 
-    // include/require with user input
+    // include/require with user input — LFI vulnerability
     const includePattern = /(?:include|require)(?:_once)?\s*\(\s*\$_(POST|GET|REQUEST)/g;
     let match;
     while ((match = includePattern.exec(content)) !== null) {
@@ -893,101 +796,13 @@ function checkDirectFileInclusion(phpFiles: string[], contents: Map<string, stri
         fix: 'Never include files based on user input. Use a whitelist of allowed files.',
       });
     }
-
-    // Direct $wpdb->query without prepare
-    const rawQueryPattern = /\$wpdb\s*->\s*query\s*\(\s*["']/g;
-    while ((match = rawQueryPattern.exec(content)) !== null) {
-      const contextStart = Math.max(0, match.index - 100);
-      const context = content.substring(contextStart, match.index + match[0].length + 200);
-      if (!/prepare/.test(context) && /\$/.test(context.substring(match[0].length))) {
-        issues.push({
-          id: generateTestId('code-quality'), category: 'code-quality', severity: 'high', type: 'error',
-          title: 'SQL injection risk: $wpdb->query() without prepare()',
-          message: 'Direct $wpdb->query() with string interpolation instead of $wpdb->prepare()',
-          file: rel, line: getLineNumber(content, match.index), code: 'sql-injection',
-          fix: 'Use $wpdb->prepare() for all queries with variable data',
-        });
-      }
-    }
   }
 
   return issues;
 }
 
-function checkUnsafeSqlQueries(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-
-  for (const file of phpFiles) {
-    const content = contents.get(file) || '';
-    const rel = relativePath(file, pluginPath);
-
-    // $wpdb->get_results/get_row/get_var with string concatenation (not prepare)
-    // Use a simpler pattern to avoid catastrophic backtracking
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (/\$wpdb\s*->\s*(?:get_results|get_row|get_var|get_col)\s*\(/.test(line)) {
-        // Check if this line has variable interpolation and no prepare
-        if (/\$/.test(line.split(/get_results|get_row|get_var|get_col/)[1] || '') && !/prepare/.test(line)) {
-          // Also check previous lines for prepare
-          const prevLines = lines.slice(Math.max(0, i - 3), i).join('\n');
-          if (!/prepare/.test(prevLines)) {
-            issues.push({
-              id: generateTestId('code-quality'), category: 'code-quality', severity: 'high', type: 'error',
-              title: 'SQL injection risk: query with variable interpolation',
-              message: 'Database query method uses string interpolation without $wpdb->prepare()',
-              file: rel, line: i + 1, code: 'sql-injection-interpolation',
-              fix: 'Wrap query with $wpdb->prepare() to safely handle variable data',
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return issues;
-}
-
-function checkUnserializeOnDbData(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-
-  for (const file of phpFiles) {
-    const content = contents.get(file) || '';
-    const rel = relativePath(file, pluginPath);
-
-    // unserialize() used on data from get_option, get_post_meta, get_user_meta etc.
-    const pattern = /\bunserialize\s*\(\s*(?:get_option|get_post_meta|get_user_meta|get_transient|get_site_option)\s*\(/g;
-    let match;
-    while ((match = pattern.exec(content)) !== null) {
-      issues.push({
-        id: generateTestId('code-quality'), category: 'code-quality', severity: 'critical', type: 'error',
-        title: 'Object injection: unserialize() on database data',
-        message: 'unserialize() on get_option/get_post_meta values can lead to object injection if data is tampered',
-        file: rel, line: getLineNumber(content, match.index), code: 'object-injection',
-        fix: 'WordPress auto-unserializes option/meta values. If manual unserialize is needed, use maybe_unserialize() or json_decode() instead',
-      });
-    }
-
-    // Also catch: $data = get_option(...); ... unserialize($data)
-    const varPattern = /\bunserialize\s*\(\s*\$\w+\s*\)/g;
-    while ((match = varPattern.exec(content)) !== null) {
-      const lineNum = getLineNumber(content, match.index);
-      const contextStart = Math.max(0, match.index - 500);
-      const context = content.substring(contextStart, match.index);
-      if (/get_option|get_post_meta|get_user_meta|get_transient/.test(context)) {
-        issues.push({
-          id: generateTestId('code-quality'), category: 'code-quality', severity: 'high', type: 'warning',
-          title: 'Potential object injection: unserialize() on variable from DB',
-          message: 'Variable passed to unserialize() may contain database-sourced data',
-          file: rel, line: lineNum, code: 'object-injection-indirect',
-          fix: 'Use maybe_unserialize() or json_decode() instead of unserialize()',
-        });
-      }
-    }
-  }
-
-  return issues;
-}
+// REMOVED: checkUnsafeSqlQueries — now in security-checker.ts (checkSqlInjection)
+// REMOVED: checkUnserializeOnDbData — now in security-checker.ts (checkObjectInjection)
 
 function checkAdminPostHandlers(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
   const issues: CheckerIssue[] = [];
@@ -1086,47 +901,4 @@ function checkSsrfPatterns(phpFiles: string[], contents: Map<string, string>, pl
   return issues;
 }
 
-function checkDbQueryInLoop(phpFiles: string[], contents: Map<string, string>, pluginPath: string): CheckerIssue[] {
-  const issues: CheckerIssue[] = [];
-
-  for (const file of phpFiles) {
-    const content = contents.get(file) || '';
-    const rel = relativePath(file, pluginPath);
-    const lines = content.split('\n');
-
-    let insideLoop = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-
-      // Track loop nesting
-      if (/\b(?:foreach|for|while)\s*\(/.test(line)) insideLoop++;
-      if (insideLoop > 0 && /\}\s*$/.test(line.trim())) insideLoop = Math.max(0, insideLoop - 1);
-
-      if (insideLoop > 0) {
-        // Check for DB queries inside loops (N+1 pattern)
-        if (/\bget_(?:option|post_meta|user_meta|term_meta|comment_meta)\s*\(/.test(line)) {
-          issues.push({
-            id: generateTestId('performance'), category: 'code-quality', severity: 'high', type: 'warning',
-            title: 'N+1 query: DB lookup inside loop',
-            message: 'get_option/get_post_meta/get_user_meta called inside a loop — causes N+1 queries',
-            file: rel, line: i + 1, code: 'n-plus-one-query',
-            fix: 'Batch-fetch data before the loop using get_posts with meta_query, or cache results',
-          });
-        }
-
-        // WP_Query inside loop
-        if (/new\s+WP_Query\s*\(/.test(line)) {
-          issues.push({
-            id: generateTestId('performance'), category: 'code-quality', severity: 'high', type: 'warning',
-            title: 'N+1 query: WP_Query inside loop',
-            message: 'new WP_Query() inside a loop — potentially hundreds of queries',
-            file: rel, line: i + 1, code: 'query-in-loop',
-            fix: 'Restructure to run a single query before the loop',
-          });
-        }
-      }
-    }
-  }
-
-  return issues;
-}
+// REMOVED: checkDbQueryInLoop — now in perf-checker.ts (checkN1Queries)
