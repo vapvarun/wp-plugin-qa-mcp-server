@@ -277,20 +277,15 @@ export interface PluginManifest {
 export type TestCategory =
   | 'smoke'
   | 'functionality'
-  | 'code-quality'
-  | 'security'
   | 'api'
   | 'database'
   | 'browser'
   | 'ux'
   | 'templates'
-  | 'action-audit'
-  | 'compatibility'
-  | 'i18n'
-  | 'performance'
-  | 'wporg-ready'
   | 'a11y'
-  | 'conflicts';
+  | 'admin-eval'
+  | 'frontend-eval'
+  | 'marketing';
 
 export interface TestItem {
   id: string;

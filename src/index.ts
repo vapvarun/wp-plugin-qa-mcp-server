@@ -9,7 +9,7 @@
 import { WpPluginQaServer } from './server.js';
 
 async function main() {
-  console.error('Starting WP Plugin QA MCP Server v1.0.0...');
+  console.error('Starting WP Plugin QA MCP Server v2.1.0...');
   const server = new WpPluginQaServer();
   await server.run();
 }

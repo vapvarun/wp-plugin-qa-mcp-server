@@ -1,6 +1,7 @@
 /**
- * WP Plugin QA MCP Server - Main Server (v1.2.0)
- * 22 tools for comprehensive WordPress plugin quality assurance.
+ * WP Plugin QA MCP Server - Main Server (v2.1.0)
+ * 15 tools focused on product evaluation.
+ * Code quality checks are handled by WPCS MCP + Plugin Check PCP.
  * Note: No shell commands used. All checks are static analysis or HTTP-based.
  */
 
@@ -14,22 +15,17 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { tools } from './tools.js';
 import { scanPlugin } from './scanner.js';
-import { generateTestPlan } from './plan-generator.js';
-import { checkStatic, resetWpCliCache } from './static-checker.js';
 import { checkApi } from './api-checker.js';
 import { checkDatabase } from './db-checker.js';
 import { checkBrowser } from './browser-runner.js';
 import { checkUx } from './ux-checker.js';
 import { checkTemplates } from './template-checker.js';
-import { checkCompat } from './compat-checker.js';
-import { checkI18n } from './i18n-checker.js';
-import { checkPerformance } from './perf-checker.js';
+import { checkAccessibility } from './a11y-checker.js';
+import { evaluateAdmin } from './admin-evaluator.js';
+import { evaluateFrontend } from './frontend-evaluator.js';
+import { evaluateMarketing } from './marketing-evaluator.js';
 import { buildReport, formatReport, exportJson, exportSarif, exportJunit, buildAuditReport, formatAuditReport } from './report-builder.js';
 import { analyzeCompetitors, formatCompetitiveReport } from './competitive-analyzer.js';
-import { checkWpOrgReady } from './wporg-checker.js';
-import { checkSecurity } from './security-checker.js';
-import { checkAccessibility } from './a11y-checker.js';
-import { checkConflicts } from './conflict-detector.js';
 import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
 import { analyzeExpectations, formatCategoryAnalysis } from './category-expectations.js';
 import type { PluginManifest, CheckerResult } from './types.js';
@@ -42,7 +38,7 @@ export class WpPluginQaServer {
     this.server = new Server(
       {
         name: 'wp-plugin-qa-mcp-server',
-        version: '1.2.0',
+        version: '2.1.0',
       },
       {
         capabilities: {
@@ -63,22 +59,12 @@ export class WpPluginQaServer {
       const { name, arguments: args } = request.params;
       const toolArgs = (args || {}) as Record<string, unknown>;
 
-      // Reset ID counter at start of each tool call to avoid cross-call collisions
       resetIdCounter();
 
       try {
         switch (name) {
           case 'wppqa_scan_plugin':
             return this.handleScanPlugin(toolArgs.plugin_path as string);
-
-          case 'wppqa_generate_plan':
-            return this.handleGeneratePlan(toolArgs.manifest as string);
-
-          case 'wppqa_run_full_scan':
-            return this.handleFullScan(toolArgs.plugin_path as string);
-
-          case 'wppqa_check_static':
-            return this.handleCheckStatic(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined);
 
           case 'wppqa_check_api':
             return await this.handleCheckApi(
@@ -105,20 +91,26 @@ export class WpPluginQaServer {
           case 'wppqa_check_templates':
             return this.handleCheckTemplates(toolArgs.plugin_path as string);
 
-          case 'wppqa_check_compat':
-            return this.handleCheckCompat(toolArgs.plugin_path as string);
+          case 'wppqa_check_a11y':
+            return this.handleCheckA11y(toolArgs.plugin_path as string);
 
-          case 'wppqa_check_i18n':
-            return this.handleCheckI18n(toolArgs.plugin_path as string);
+          case 'wppqa_evaluate_admin':
+            return this.handleEvaluateAdmin(toolArgs.plugin_path as string);
 
-          case 'wppqa_check_performance':
-            return this.handleCheckPerformance(toolArgs.plugin_path as string);
+          case 'wppqa_evaluate_frontend':
+            return this.handleEvaluateFrontend(toolArgs.plugin_path as string);
 
-          case 'wppqa_execute_item':
-            return this.handleExecuteItem(
-              toolArgs.test_item as string,
+          case 'wppqa_evaluate_marketing':
+            return this.handleEvaluateMarketing(toolArgs.plugin_path as string);
+
+          case 'wppqa_analyze_gaps':
+            return this.handleAnalyzeGaps(toolArgs.plugin_path as string);
+
+          case 'wppqa_competitive_analysis':
+            return await this.handleCompetitiveAnalysis(
               toolArgs.plugin_path as string,
-              toolArgs.site_url as string | undefined,
+              toolArgs.search_keywords as string | undefined,
+              toolArgs.max_competitors as number | undefined,
             );
 
           case 'wppqa_generate_report':
@@ -133,28 +125,6 @@ export class WpPluginQaServer {
               toolArgs.plugin_path as string,
               toolArgs.site_url as string | undefined,
             );
-
-          case 'wppqa_competitive_analysis':
-            return await this.handleCompetitiveAnalysis(
-              toolArgs.plugin_path as string,
-              toolArgs.search_keywords as string | undefined,
-              toolArgs.max_competitors as number | undefined,
-            );
-
-          case 'wppqa_check_wporg_ready':
-            return this.handleCheckWpOrgReady(toolArgs.plugin_path as string);
-
-          case 'wppqa_check_security':
-            return this.handleCheckSecurity(toolArgs.plugin_path as string);
-
-          case 'wppqa_check_a11y':
-            return this.handleCheckA11y(toolArgs.plugin_path as string);
-
-          case 'wppqa_check_conflicts':
-            return this.handleCheckConflicts(toolArgs.plugin_path as string);
-
-          case 'wppqa_analyze_gaps':
-            return this.handleAnalyzeGaps(toolArgs.plugin_path as string);
 
           case 'wppqa_audit_plugin':
             return await this.handleAuditPlugin(
@@ -177,31 +147,6 @@ export class WpPluginQaServer {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const manifest = scanPlugin(pluginPath);
     return this.successResult(JSON.stringify(manifest, null, 2));
-  }
-
-  private handleGeneratePlan(manifestJson: string): CallToolResult {
-    if (!manifestJson) return this.errorResult('manifest JSON is required');
-    try {
-      const manifest: PluginManifest = JSON.parse(manifestJson);
-      const plan = generateTestPlan(manifest);
-      return this.successResult(JSON.stringify(plan, null, 2));
-    } catch (e) {
-      return this.errorResult(`Invalid manifest JSON: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  private handleFullScan(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const manifest = scanPlugin(pluginPath);
-    const plan = generateTestPlan(manifest);
-    return this.successResult(JSON.stringify({ manifest, plan }, null, 2));
-  }
-
-  private handleCheckStatic(pluginPath: string, siteUrl?: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    resetWpCliCache();
-    const result = checkStatic(pluginPath, siteUrl);
-    return this.formatCheckerResult(result);
   }
 
   private async handleCheckApi(pluginPath: string, siteUrl: string): Promise<CallToolResult> {
@@ -241,51 +186,57 @@ export class WpPluginQaServer {
     return this.formatCheckerResult(result);
   }
 
-  private handleCheckCompat(pluginPath: string): CallToolResult {
+  private handleCheckA11y(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkCompat(pluginPath);
+    const result = checkAccessibility(pluginPath);
     return this.formatCheckerResult(result);
   }
 
-  private handleCheckI18n(pluginPath: string): CallToolResult {
+  private handleEvaluateAdmin(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkI18n(pluginPath);
+    const manifest = scanPlugin(pluginPath);
+    const result = evaluateAdmin(manifest, pluginPath);
     return this.formatCheckerResult(result);
   }
 
-  private handleCheckPerformance(pluginPath: string): CallToolResult {
+  private handleEvaluateFrontend(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkPerformance(pluginPath);
+    const manifest = scanPlugin(pluginPath);
+    const result = evaluateFrontend(manifest, pluginPath);
     return this.formatCheckerResult(result);
   }
 
-  private handleExecuteItem(testItemJson: string, pluginPath: string, siteUrl?: string): CallToolResult {
-    if (!testItemJson) return this.errorResult('test_item is required');
+  private handleEvaluateMarketing(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
+    const manifest = scanPlugin(pluginPath);
+    const result = evaluateMarketing(manifest, pluginPath);
+    return this.formatCheckerResult(result);
+  }
 
-    try {
-      const item = JSON.parse(testItemJson);
+  private handleAnalyzeGaps(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const manifest = scanPlugin(pluginPath);
 
-      if (!item.automated) {
-        let message = `MANUAL TEST: ${item.title}\n\n`;
-        message += `Category: ${item.category}\n`;
-        message += `Priority: ${item.priority}\n\n`;
-        if (item.steps) {
-          message += 'Steps:\n';
-          item.steps.forEach((step: string, i: number) => {
-            message += `  ${i + 1}. ${step}\n`;
-          });
-        }
-        if (item.expected) {
-          message += `\nExpected: ${item.expected}\n`;
-        }
-        return this.successResult(message);
-      }
+    const gapResult = analyzeGaps(manifest);
+    let output = formatGapAnalysis(gapResult);
 
-      return this.successResult(`Test item "${item.title}" queued. Use the appropriate checker tool for automated execution.`);
-    } catch (e) {
-      return this.errorResult(`Invalid test_item JSON: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    const categoryResult = analyzeExpectations(manifest);
+    output += '\n\n' + formatCategoryAnalysis(categoryResult);
+
+    output += `\n${'='.repeat(50)}\nJSON: ${JSON.stringify({ technicalGaps: gapResult, customerExpectations: categoryResult })}\n`;
+    return this.successResult(output);
+  }
+
+  private async handleCompetitiveAnalysis(
+    pluginPath: string, searchKeywords?: string, maxCompetitors?: number,
+  ): Promise<CallToolResult> {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const limit = Math.min(Math.max(maxCompetitors || 10, 3), 15);
+    const report = await analyzeCompetitors(pluginPath, searchKeywords, limit);
+    const markdown = formatCompetitiveReport(report);
+    let output = markdown;
+    output += `\n${'='.repeat(60)}\nJSON: ${JSON.stringify(report)}\n`;
+    return this.successResult(output);
   }
 
   private handleGenerateReport(pluginPath: string, resultsJson: string, format?: string): CallToolResult {
@@ -321,23 +272,17 @@ export class WpPluginQaServer {
     if (!pluginPath) return this.errorResult('plugin_path is required');
 
     const manifest = scanPlugin(pluginPath);
-    const plan = generateTestPlan(manifest);
     const allResults: CheckerResult[] = [];
 
-    // Group A: Static checks (always run)
-    resetWpCliCache();
-    allResults.push(checkStatic(pluginPath, siteUrl));
-    allResults.push(checkTemplates(pluginPath));
-    allResults.push(checkI18n(pluginPath));
-    allResults.push(checkCompat(pluginPath));
+    // Product quality checks (always run)
     allResults.push(checkUx(pluginPath));
-    allResults.push(checkPerformance(pluginPath));
-    allResults.push(checkWpOrgReady(pluginPath));
-    allResults.push(checkSecurity(pluginPath));
+    allResults.push(checkTemplates(pluginPath));
     allResults.push(checkAccessibility(pluginPath));
-    allResults.push(checkConflicts(pluginPath));
+    allResults.push(evaluateAdmin(manifest, pluginPath));
+    allResults.push(evaluateFrontend(manifest, pluginPath));
+    allResults.push(evaluateMarketing(manifest, pluginPath));
 
-    // Group B: Live site checks (only if site_url provided)
+    // Live site checks (only if site_url provided)
     if (siteUrl) {
       allResults.push(await checkApi(manifest, siteUrl));
       allResults.push(await checkDatabase(manifest, siteUrl));
@@ -351,73 +296,12 @@ export class WpPluginQaServer {
     );
 
     let output = formatReport(report);
-    output += `\n\n## Test Plan Summary\n`;
-    output += `Total planned tests: ${plan.totalItems}\n`;
+    output += `\n\n## Product Evaluation Summary\n`;
     output += `Automated checks executed: ${allResults.length}\n`;
+    output += `Categories: UX, Templates, A11y, Admin Eval, Frontend Eval, Marketing`;
+    if (siteUrl) output += `, API, Database, Browser`;
+    output += '\n';
 
-    const manualItems = plan.items.filter(i => !i.automated);
-    if (manualItems.length > 0) {
-      output += `\n## Manual Tests Remaining (${manualItems.length})\n`;
-      for (const item of manualItems.slice(0, 20)) {
-        output += `- [${item.priority}] ${item.title}\n`;
-      }
-      if (manualItems.length > 20) {
-        output += `  ... and ${manualItems.length - 20} more\n`;
-      }
-    }
-
-    return this.successResult(output);
-  }
-
-  private async handleCompetitiveAnalysis(
-    pluginPath: string, searchKeywords?: string, maxCompetitors?: number,
-  ): Promise<CallToolResult> {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const limit = Math.min(Math.max(maxCompetitors || 10, 3), 15);
-    const report = await analyzeCompetitors(pluginPath, searchKeywords, limit);
-    const markdown = formatCompetitiveReport(report);
-    let output = markdown;
-    output += `\n${'='.repeat(60)}\nJSON: ${JSON.stringify(report)}\n`;
-    return this.successResult(output);
-  }
-
-  private handleCheckWpOrgReady(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkWpOrgReady(pluginPath);
-    return this.formatCheckerResult(result);
-  }
-
-  private handleCheckSecurity(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkSecurity(pluginPath);
-    return this.formatCheckerResult(result);
-  }
-
-  private handleCheckA11y(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkAccessibility(pluginPath);
-    return this.formatCheckerResult(result);
-  }
-
-  private handleCheckConflicts(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkConflicts(pluginPath);
-    return this.formatCheckerResult(result);
-  }
-
-  private handleAnalyzeGaps(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const manifest = scanPlugin(pluginPath);
-
-    // Layer 1: Technical gaps (WordPress best practices)
-    const gapResult = analyzeGaps(manifest);
-    let output = formatGapAnalysis(gapResult);
-
-    // Layer 2: Customer expectation gaps (industry benchmarks)
-    const categoryResult = analyzeExpectations(manifest);
-    output += '\n\n' + formatCategoryAnalysis(categoryResult);
-
-    output += `\n${'='.repeat(50)}\nJSON: ${JSON.stringify({ technicalGaps: gapResult, customerExpectations: categoryResult })}\n`;
     return this.successResult(output);
   }
 
@@ -430,19 +314,14 @@ export class WpPluginQaServer {
     // Step 2: Gap analysis
     const gapResult = analyzeGaps(manifest);
 
-    // Step 3: Run all code quality checks
+    // Step 3: Run all product evaluation checks
     const allResults: CheckerResult[] = [];
-    resetWpCliCache();
-    allResults.push(checkStatic(pluginPath, siteUrl));
-    allResults.push(checkTemplates(pluginPath));
-    allResults.push(checkI18n(pluginPath));
-    allResults.push(checkCompat(pluginPath));
     allResults.push(checkUx(pluginPath));
-    allResults.push(checkPerformance(pluginPath));
-    allResults.push(checkWpOrgReady(pluginPath));
-    allResults.push(checkSecurity(pluginPath));
+    allResults.push(checkTemplates(pluginPath));
     allResults.push(checkAccessibility(pluginPath));
-    allResults.push(checkConflicts(pluginPath));
+    allResults.push(evaluateAdmin(manifest, pluginPath));
+    allResults.push(evaluateFrontend(manifest, pluginPath));
+    allResults.push(evaluateMarketing(manifest, pluginPath));
 
     // Live site checks
     if (siteUrl) {
@@ -458,7 +337,7 @@ export class WpPluginQaServer {
       allResults,
     );
 
-    // Step 5: Customer expectation analysis (industry benchmarks)
+    // Step 5: Customer expectation analysis
     const categoryResult = analyzeExpectations(manifest);
 
     // Step 6: Build unified audit report
@@ -519,7 +398,6 @@ export class WpPluginQaServer {
       }
     }
 
-    // Return JSON result appended for machine consumption
     message += `\n${'='.repeat(50)}\n`;
     message += `JSON: ${JSON.stringify(result)}\n`;
 
@@ -545,6 +423,6 @@ export class WpPluginQaServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('WP Plugin QA MCP Server v1.2.0 running on stdio');
+    console.error('WP Plugin QA MCP Server v2.1.0 running on stdio');
   }
 }

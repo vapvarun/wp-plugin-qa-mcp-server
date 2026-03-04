@@ -1,6 +1,7 @@
 /**
- * WP Plugin QA MCP Server - Report Builder
- * Aggregates checker results into graded QA report (A-F, 0-100).
+ * WP Plugin QA MCP Server - Report Builder (v2.1.0)
+ * Aggregates checker results into graded product evaluation report (A+ through F, 0-100).
+ * 10-tier grading: A+, A, A-, B+, B, B-, C+, C, C-, D, F
  * Note: Pure data aggregation, no shell commands used.
  */
 
@@ -10,22 +11,17 @@ import type {
 } from './types.js';
 
 const CATEGORY_WEIGHTS: Record<string, number> = {
-  'smoke': 15,
-  'functionality': 12,
-  'code-quality': 8,
-  'security': 15,
-  'api': 8,
-  'database': 6,
+  'smoke': 10,
+  'functionality': 10,
+  'api': 10,
+  'database': 8,
   'browser': 5,
-  'ux': 4,
-  'templates': 3,
-  'action-audit': 3,
-  'compatibility': 2,
-  'i18n': 1,
-  'performance': 2,
-  'wporg-ready': 8,
-  'a11y': 5,
-  'conflicts': 3,
+  'ux': 12,
+  'templates': 5,
+  'a11y': 10,
+  'admin-eval': 12,
+  'frontend-eval': 10,
+  'marketing': 8,
 };
 
 export function buildReport(
@@ -116,10 +112,16 @@ function calculateWeightedScore(categories: CategoryScore[]): number {
 }
 
 function scoreToGrade(score: number): string {
+  if (score >= 95) return 'A+';
   if (score >= 90) return 'A';
-  if (score >= 80) return 'B';
-  if (score >= 70) return 'C';
-  if (score >= 60) return 'D';
+  if (score >= 85) return 'A-';
+  if (score >= 80) return 'B+';
+  if (score >= 75) return 'B';
+  if (score >= 70) return 'B-';
+  if (score >= 65) return 'C+';
+  if (score >= 60) return 'C';
+  if (score >= 55) return 'C-';
+  if (score >= 40) return 'D';
   return 'F';
 }
 
@@ -242,7 +244,7 @@ export function exportSarif(report: QaReport): string {
       tool: {
         driver: {
           name: 'wp-plugin-qa',
-          version: '1.1.0',
+          version: '2.1.0',
           informationUri: 'https://github.com/wbcomdesigns/wp-plugin-qa-mcp-server',
           rules,
         },

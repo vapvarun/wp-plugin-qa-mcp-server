@@ -1,12 +1,13 @@
 /**
- * WP Plugin QA MCP Server - Tool Definitions
- * 22 tools for comprehensive WordPress plugin QA
+ * WP Plugin QA MCP Server - Tool Definitions (v2.0.0)
+ * 15 tools focused on product evaluation, not code linting.
+ * Code quality checks are handled by WPCS MCP + Plugin Check PCP.
  */
 
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 
 export const tools: Tool[] = [
-  // ─── Phase 1: Scan & Plan ─────────────────────────────────────
+  // ─── Discovery ─────────────────────────────────────────────────
   {
     name: 'wppqa_scan_plugin',
     description:
@@ -22,57 +23,8 @@ export const tools: Tool[] = [
       required: ['plugin_path'],
     },
   },
-  {
-    name: 'wppqa_generate_plan',
-    description:
-      'Generate a prioritized test plan from a PluginManifest. Creates 80-300 TestItems across 13 categories (smoke, functionality, code quality, security, API, database, browser, UX, templates, action audit, compatibility, i18n, performance). Each test has priority, automation status, and detailed steps.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        manifest: {
-          type: 'string',
-          description: 'PluginManifest JSON string (output from wppqa_scan_plugin)',
-        },
-      },
-      required: ['manifest'],
-    },
-  },
-  {
-    name: 'wppqa_run_full_scan',
-    description:
-      'Scan a plugin AND generate its test plan in one call. Combines wppqa_scan_plugin + wppqa_generate_plan. Returns both the manifest and the test plan.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
 
-  // ─── Phase 2: Static Checks (Group A) ─────────────────────────
-  {
-    name: 'wppqa_check_static',
-    description:
-      'Static code analysis: dead code detection, duplicate/similar functions, undefined function calls, naming consistency (plugin prefix), code pattern consistency. If site_url is provided, uses WP-CLI to discover all available functions from the running WordPress install for accurate undefined-function detection.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        site_url: {
-          type: 'string',
-          description: 'Optional WordPress site URL (e.g. http://roadmap.local) — enables WP-CLI function discovery for accurate undefined-function detection',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
+  // ─── Functional Checks (live site) ─────────────────────────────
   {
     name: 'wppqa_check_api',
     description:
@@ -95,7 +47,7 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_check_database',
     description:
-      'Check database integrity: custom table existence and schema, settings persistence in wp_options, CPT data in wp_posts, data cleanup on uninstall, orphaned data, autoload appropriateness. Requires Local WP running.',
+      'Check database integrity: custom table existence and schema, settings persistence in wp_options, CPT data in wp_posts, data cleanup on uninstall, orphaned data. Requires Local WP running.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -136,6 +88,8 @@ export const tools: Tool[] = [
       required: ['plugin_path', 'site_url'],
     },
   },
+
+  // ─── Product Quality Checks ────────────────────────────────────
   {
     name: 'wppqa_check_ux',
     description:
@@ -167,157 +121,9 @@ export const tools: Tool[] = [
     },
   },
   {
-    name: 'wppqa_check_compat',
-    description:
-      'Compatibility analysis: PHP deprecated function usage, WordPress deprecated function usage, BuddyPress/WooCommerce integration checks, multisite support, hook priority conflicts, script dependency validation.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-  {
-    name: 'wppqa_check_i18n',
-    description:
-      'Internationalization audit: text domain consistency, __()/_e() wrapper coverage, POT file existence, no concatenated translatable strings, proper plural forms, no HTML in translatable strings, load_plugin_textdomain check.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-  {
-    name: 'wppqa_check_performance',
-    description:
-      'Performance baseline analysis: DB query count estimation, asset loading audit, autoload option check, N+1 query pattern detection, caching usage, script footer loading, asset count.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-
-  // ─── Phase 2: Single Item Execution ───────────────────────────
-  {
-    name: 'wppqa_execute_item',
-    description:
-      'Execute a single TestItem from the test plan and return pass/fail result. For automated items, runs the check directly. For manual items, returns the test steps for human execution.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        test_item: {
-          type: 'string',
-          description: 'TestItem JSON string to execute',
-        },
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        site_url: {
-          type: 'string',
-          description: 'Local WP site URL (needed for live tests)',
-        },
-      },
-      required: ['test_item', 'plugin_path'],
-    },
-  },
-
-  // ─── Phase 3: Report ──────────────────────────────────────────
-  {
-    name: 'wppqa_generate_report',
-    description:
-      'Aggregate all checker results into a graded QA report (A-F). Shows category scores, prioritized bug list with fix suggestions, overall score out of 100. Supports multiple export formats: markdown (default), json, sarif (for GitHub code scanning), junit (for CI/CD).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        results: {
-          type: 'string',
-          description: 'JSON string of all CheckerResult arrays from previous checks',
-        },
-        format: {
-          type: 'string',
-          enum: ['markdown', 'json', 'sarif', 'junit'],
-          description: 'Output format: markdown (default human-readable), json (structured), sarif (GitHub code scanning), junit (CI/CD XML)',
-          default: 'markdown',
-        },
-      },
-      required: ['plugin_path', 'results'],
-    },
-  },
-  {
-    name: 'wppqa_run_automated_qa',
-    description:
-      'Full automated QA pipeline: scan plugin -> generate test plan -> execute all automated checks (static, templates, i18n, compat, UX, performance) -> generate graded report. One command for complete QA. Live site checks (API, DB, browser) are included only if site_url is provided.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        site_url: {
-          type: 'string',
-          description: 'Optional Local WP site URL for live checks (REST, AJAX, DB, browser)',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-
-  // ─── Phase 2: Advanced Checks ──────────────────────────────────
-  {
-    name: 'wppqa_check_wporg_ready',
-    description:
-      'WordPress.org submission readiness check: unique prefixing on functions/classes/constants, ABSPATH guards, readme.txt validation, dev files detection, bundled core libraries, GPL license, text domain consistency, external resources, custom update checkers, obfuscated code. Returns a confidence score (0-100%) for "will it pass review?".',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-  {
-    name: 'wppqa_check_security',
-    description:
-      'Deep security analysis beyond basic patterns: input-to-output taint tracing (XSS), nonce chain verification (CSRF), context-appropriate escaping validation, file upload security, $_SERVER["REQUEST_URI"] XSS, object injection via unserialize(), open redirect detection, AJAX handler access control, REST API broken access control, SQL injection patterns, dangerous PHP functions.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-  {
     name: 'wppqa_check_a11y',
     description:
-      'Accessibility audit (WCAG 2.1 AA): form label associations, image alt attributes, ARIA role correctness, focus management in JS (modal focus trapping), color contrast in CSS, keyboard navigation support, screen reader text for icon-only buttons. Based on European Accessibility Act requirements.',
+      'Accessibility audit (WCAG 2.1 AA): form label associations, image alt attributes, ARIA role correctness, focus management in JS (modal focus trapping), color contrast in CSS, keyboard navigation support, screen reader text for icon-only buttons.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -330,9 +136,39 @@ export const tools: Tool[] = [
     },
   },
   {
-    name: 'wppqa_check_conflicts',
+    name: 'wppqa_evaluate_admin',
     description:
-      'Plugin conflict detection: unprefixed custom hooks, global PHP variable namespace collisions, generic CSS class names (.container, .wrapper, .title), JavaScript global pollution, REST API namespace conflicts, high-risk function name collisions, aggressive hook priorities. Identifies patterns that commonly cause issues when multiple plugins are active.',
+      'Admin settings & pages evaluation as a product reviewer would: settings organization (grouping, tabs), setting justification (clear purpose, no redundancy), labels & help text clarity, default value quality, admin page count & menu placement, capability gates, Settings API usage.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_evaluate_frontend',
+    description:
+      'Frontend output quality evaluation: shortcode output quality & fallbacks, block rendering & editor preview, template structure & WP patterns, CSS scoping & namespace, JS error handling & AJAX behavior, responsive CSS/media queries, widget form labels & output structure.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_evaluate_marketing',
+    description:
+      'Marketing fitness scorer: readme.txt content quality (not format — PCP does that), feature messaging & discoverability, onboarding/setup wizard presence, free/pro upsell model, documentation & support links, hook/API extensibility surface, WordPress.org profile readiness (banner, icon, screenshots, contributors, tags).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -345,11 +181,11 @@ export const tools: Tool[] = [
     },
   },
 
-  // ─── Phase 2.5: Gap Analysis & Audit ──────────────────────────────
+  // ─── Market Fitness ────────────────────────────────────────────
   {
     name: 'wppqa_analyze_gaps',
     description:
-      'Analyze a plugin for missing features and best practices. Uses conditional rules ("if you have CPTs, you should have REST API") and unconditional rules ("every plugin needs uninstall cleanup"). Returns a prioritized gap list with maturity scoring per feature area (Data Model, API Layer, Admin UI, Block Editor, Lifecycle, Extensibility, Integrations, Automation).',
+      'Analyze a plugin for missing features and best practices. Uses conditional rules ("if you have CPTs, you should have REST API") and unconditional rules ("every plugin needs uninstall cleanup"). Returns a prioritized gap list with maturity scoring per feature area.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -361,33 +197,6 @@ export const tools: Tool[] = [
       required: ['plugin_path'],
     },
   },
-  {
-    name: 'wppqa_audit_plugin',
-    description:
-      'Complete plugin audit: scan features, analyze gaps (what\'s missing), run all code quality checks, and produce a unified report. Combines gap analysis (conditional/unconditional rules, maturity scoring) + code quality (static analysis, security, a11y, conflicts, i18n, compat, performance, UX, templates, wporg-ready). Returns one comprehensive report with inventory, maturity, gaps, code issues, and prioritized action items. The definitive "is this plugin ready?" answer.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        site_url: {
-          type: 'string',
-          description: 'Optional Local WP site URL for live checks (REST, AJAX, DB, browser)',
-        },
-        format: {
-          type: 'string',
-          enum: ['markdown', 'json'],
-          description: 'Output format: markdown (default human-readable) or json (structured)',
-          default: 'markdown',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-
-  // ─── Phase 4: Competitive Analysis ─────────────────────────────
   {
     name: 'wppqa_competitive_analysis',
     description:
@@ -406,6 +215,77 @@ export const tools: Tool[] = [
         max_competitors: {
           type: 'number',
           description: 'Max competitors to analyze in detail (default: 10, max: 15)',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── Reports ───────────────────────────────────────────────────
+  {
+    name: 'wppqa_generate_report',
+    description:
+      'Aggregate all checker results into a graded QA report (A-F). Shows category scores, prioritized bug list with fix suggestions, overall score out of 100. Supports multiple export formats: markdown (default), json, sarif, junit.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        results: {
+          type: 'string',
+          description: 'JSON string of all CheckerResult arrays from previous checks',
+        },
+        format: {
+          type: 'string',
+          enum: ['markdown', 'json', 'sarif', 'junit'],
+          description: 'Output format (default: markdown)',
+          default: 'markdown',
+        },
+      },
+      required: ['plugin_path', 'results'],
+    },
+  },
+  {
+    name: 'wppqa_run_automated_qa',
+    description:
+      'Full automated product evaluation pipeline: scan plugin -> run product quality checks (UX, templates, a11y, admin eval, frontend eval, marketing) -> live site checks if URL provided (API, DB, browser) -> gap analysis -> generate graded report.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        site_url: {
+          type: 'string',
+          description: 'Optional Local WP site URL for live checks (REST, AJAX, DB, browser)',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_audit_plugin',
+    description:
+      'Complete product audit: scan features, evaluate admin experience, evaluate frontend output, assess marketing fitness, run UX/a11y/template checks, analyze feature gaps, and produce a unified report. The definitive "is this plugin ready to sell?" answer. Live site checks (API, DB, browser) included only if site_url provided.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        site_url: {
+          type: 'string',
+          description: 'Optional Local WP site URL for live checks (REST, AJAX, DB, browser)',
+        },
+        format: {
+          type: 'string',
+          enum: ['markdown', 'json'],
+          description: 'Output format (default: markdown)',
+          default: 'markdown',
         },
       },
       required: ['plugin_path'],
