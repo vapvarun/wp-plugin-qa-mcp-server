@@ -285,7 +285,13 @@ export type TestCategory =
   | 'a11y'
   | 'admin-eval'
   | 'frontend-eval'
-  | 'marketing';
+  | 'marketing'
+  | 'phpcs'
+  | 'phpstan'
+  | 'eslint'
+  | 'stylelint'
+  | 'phpcompat'
+  | 'a11y-grep';
 
 export interface TestItem {
   id: string;

@@ -291,4 +291,60 @@ export const tools: Tool[] = [
       required: ['plugin_path'],
     },
   },
+
+  // ─── Code Quality Tools ─────────────────────────────────────────
+  {
+    name: 'wppqa_setup_quality',
+    description:
+      'Scaffold all code quality config files in a plugin: .phpcs.xml.dist, phpstan.neon, .eslintrc.json, .eslintignore, .stylelintrc.json, .editorconfig, .pa11yci. Reads plugin header for text domain, greps wp_localize_script for JS globals, adds phpstan to composer.json. Skips files that already exist.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        site_url: {
+          type: 'string',
+          description: 'Optional Local WP site URL for pa11y config (e.g., http://local-test.local)',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_run_code_checks',
+    description:
+      'Run ALL code quality checks on a plugin: PHPCS (WordPress coding standards), PHPStan (static analysis), ESLint (JavaScript), Stylelint (CSS), PHP Compatibility (7.4-8.4), and static a11y grep (outline:none, empty links, div onclick, missing alt). Returns unified report with issues from all tools. Gracefully skips tools that are not installed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_check_code_quality',
+    description:
+      'Run a SINGLE code quality check: phpcs, phpstan, eslint, stylelint, phpcompat, or a11y-grep. Use this when you want to run just one tool instead of all of them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        check: {
+          type: 'string',
+          enum: ['phpcs', 'phpstan', 'eslint', 'stylelint', 'phpcompat', 'a11y-grep'],
+          description: 'Which quality check to run',
+        },
+      },
+      required: ['plugin_path', 'check'],
+    },
+  },
 ];

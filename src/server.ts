@@ -28,6 +28,8 @@ import { buildReport, formatReport, exportJson, exportSarif, exportJunit, buildA
 import { analyzeCompetitors, formatCompetitiveReport } from './competitive-analyzer.js';
 import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
 import { analyzeExpectations, formatCategoryAnalysis } from './category-expectations.js';
+import { scaffoldQualityConfigs } from './quality-scaffolder.js';
+import { runAllCodeChecks, runSingleCheck } from './code-quality-checker.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -131,6 +133,24 @@ export class WpPluginQaServer {
               toolArgs.plugin_path as string,
               toolArgs.site_url as string | undefined,
               toolArgs.format as string | undefined,
+            );
+
+          // ─── Code Quality Tools ───────────────────────────────
+          case 'wppqa_setup_quality':
+            return this.handleSetupQuality(
+              toolArgs.plugin_path as string,
+              toolArgs.site_url as string | undefined,
+            );
+
+          case 'wppqa_run_code_checks':
+            return this.handleRunCodeChecks(
+              toolArgs.plugin_path as string,
+            );
+
+          case 'wppqa_check_code_quality':
+            return this.handleCheckCodeQuality(
+              toolArgs.plugin_path as string,
+              toolArgs.check as string,
             );
 
           default:
@@ -351,6 +371,113 @@ export class WpPluginQaServer {
     let output = formatAuditReport(auditReport);
     output += '\n\n' + formatCategoryAnalysis(categoryResult);
     return this.successResult(output);
+  }
+
+  // ─── Code Quality Handlers ──────────────────────────────────
+
+  private handleSetupQuality(pluginPath: string, siteUrl?: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+
+    const result = scaffoldQualityConfigs(pluginPath, siteUrl);
+
+    let msg = `QUALITY CONFIG SETUP\n${'='.repeat(50)}\n\n`;
+
+    if (result.created.length > 0) {
+      msg += `CREATED (${result.created.length}):\n`;
+      for (const f of result.created) msg += `  + ${f}\n`;
+      msg += '\n';
+    }
+
+    if (result.updated.length > 0) {
+      msg += `UPDATED (${result.updated.length}):\n`;
+      for (const f of result.updated) msg += `  ~ ${f}\n`;
+      msg += '\n';
+    }
+
+    if (result.skipped.length > 0) {
+      msg += `SKIPPED (already exist) (${result.skipped.length}):\n`;
+      for (const f of result.skipped) msg += `  - ${f}\n`;
+      msg += '\n';
+    }
+
+    if (result.errors.length > 0) {
+      msg += `ERRORS (${result.errors.length}):\n`;
+      for (const f of result.errors) msg += `  ! ${f}\n`;
+      msg += '\n';
+    }
+
+    msg += `\nNext steps:\n`;
+    msg += `  1. composer install     (install phpstan)\n`;
+    msg += `  2. npm install --include=dev  (install stylelint if in package.json)\n`;
+    msg += `  3. Run: wppqa_run_code_checks to see all issues\n`;
+
+    return this.successResult(msg);
+  }
+
+  private handleRunCodeChecks(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+
+    const results = runAllCodeChecks(pluginPath);
+
+    let msg = `CODE QUALITY REPORT\n${'='.repeat(50)}\n\n`;
+    msg += `SUMMARY\n${'-'.repeat(40)}\n`;
+
+    let totalErrors = 0;
+    let totalWarnings = 0;
+
+    for (const r of results) {
+      const errors = r.issues.filter(i => i.type === 'error').length;
+      const warnings = r.issues.filter(i => i.type === 'warning').length;
+      const infos = r.issues.filter(i => i.type === 'info').length;
+      totalErrors += errors;
+      totalWarnings += warnings;
+
+      const status = r.skipped > 0 && r.failed === 0 && infos > 0
+        ? 'SKIPPED'
+        : errors === 0 ? 'PASS' : 'FAIL';
+
+      msg += `  ${r.category.toUpperCase().padEnd(12)} ${status.padEnd(8)} ${errors} errors, ${warnings} warnings`;
+      if (infos > 0 && r.skipped > 0) msg += ` (${r.issues[0]?.message || ''})`;
+      msg += ` [${r.duration}ms]\n`;
+    }
+
+    msg += `${'-'.repeat(40)}\n`;
+    msg += `  TOTAL: ${totalErrors} errors, ${totalWarnings} warnings\n\n`;
+
+    // Detailed issues per tool
+    for (const r of results) {
+      const issues = r.issues.filter(i => i.type !== 'info');
+      if (issues.length === 0) continue;
+
+      msg += `\n${r.category.toUpperCase()} DETAILS (${issues.length} issues)\n${'-'.repeat(40)}\n`;
+      for (const issue of issues.slice(0, 20)) {
+        msg += `  [${issue.type}] ${issue.file}:${issue.line} — ${issue.title}\n`;
+        if (issue.code) msg += `    Code: ${issue.code}\n`;
+      }
+      if (issues.length > 20) {
+        msg += `  ... and ${issues.length - 20} more\n`;
+      }
+    }
+
+    msg += `\n${'='.repeat(50)}\n`;
+
+    return {
+      content: [{ type: 'text', text: msg } as TextContent],
+      isError: totalErrors > 0,
+    };
+  }
+
+  private handleCheckCodeQuality(pluginPath: string, check: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    if (!check) return this.errorResult('check is required (phpcs, phpstan, eslint, stylelint, phpcompat, a11y-grep)');
+
+    const validChecks = ['phpcs', 'phpstan', 'eslint', 'stylelint', 'phpcompat', 'a11y-grep'];
+    if (!validChecks.includes(check)) {
+      return this.errorResult(`Invalid check: ${check}. Must be one of: ${validChecks.join(', ')}`);
+    }
+
+    const result = runSingleCheck(pluginPath, check as 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep');
+    return this.formatCheckerResult(result);
   }
 
   private formatCheckerResult(result: CheckerResult): CallToolResult {

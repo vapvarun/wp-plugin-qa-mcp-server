@@ -1,0 +1,33 @@
+/**
+ * WP Plugin QA MCP Server - Main Server (v2.1.0)
+ * 15 tools focused on product evaluation.
+ * Code quality checks are handled by WPCS MCP + Plugin Check PCP.
+ * Note: No shell commands used. All checks are static analysis or HTTP-based.
+ */
+export declare class WpPluginQaServer {
+    private server;
+    constructor();
+    private setupToolHandlers;
+    private handleScanPlugin;
+    private handleCheckApi;
+    private handleCheckDatabase;
+    private handleCheckBrowser;
+    private handleCheckUx;
+    private handleCheckTemplates;
+    private handleCheckA11y;
+    private handleEvaluateAdmin;
+    private handleEvaluateFrontend;
+    private handleEvaluateMarketing;
+    private handleAnalyzeGaps;
+    private handleCompetitiveAnalysis;
+    private handleGenerateReport;
+    private handleAutomatedQa;
+    private handleAuditPlugin;
+    private handleSetupQuality;
+    private handleRunCodeChecks;
+    private handleCheckCodeQuality;
+    private formatCheckerResult;
+    private successResult;
+    private errorResult;
+    run(): Promise<void>;
+}
