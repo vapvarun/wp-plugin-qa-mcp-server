@@ -306,7 +306,10 @@ export type TestCategory =
   | 'composer-audit'
   | 'i18n'
   | 'plugin-check'
-  | 'bundle-size';
+  | 'bundle-size'
+  | 'security-scan'
+  | 'performance-scan'
+  | 'pcp-deep';
 
 export interface TestItem {
   id: string;

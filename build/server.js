@@ -243,7 +243,7 @@ export class WpPluginQaServer {
         }
         let output = `FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
         // Code quality summary
-        output += `CODE QUALITY (11 checks)\n${'-'.repeat(40)}\n`;
+        output += `CODE QUALITY (14 checks)\n${'-'.repeat(40)}\n`;
         for (const r of codeResults) {
             const errors = r.issues.filter(i => i.type === 'error').length;
             const warnings = r.issues.filter(i => i.type === 'warning').length;

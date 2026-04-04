@@ -24,6 +24,9 @@ export function runAllCodeChecks(pluginPath) {
     results.push(runI18nCheck(pluginPath));
     results.push(runPluginCheck(pluginPath));
     results.push(runBundleSize(pluginPath));
+    results.push(runSecurityScan(pluginPath));
+    results.push(runPerformanceScan(pluginPath));
+    results.push(runPcpDeep(pluginPath));
     return results;
 }
 export function runSingleCheck(pluginPath, check) {
@@ -39,6 +42,9 @@ export function runSingleCheck(pluginPath, check) {
         case 'i18n': return runI18nCheck(pluginPath);
         case 'plugin-check': return runPluginCheck(pluginPath);
         case 'bundle-size': return runBundleSize(pluginPath);
+        case 'security-scan': return runSecurityScan(pluginPath);
+        case 'performance-scan': return runPerformanceScan(pluginPath);
+        case 'pcp-deep': return runPcpDeep(pluginPath);
         default: return skipResult('unknown', `Unknown check: ${check}`);
     }
 }
@@ -630,6 +636,310 @@ export function runBundleSize(pluginPath) {
         message: `Total: ${(total / 1024).toFixed(0)}KB`, file: '', line: 0, code: 'bundle-summary' });
     return { category, issues, passed: issues.filter(i => i.type === 'error').length === 0 ? 1 : 0,
         failed: issues.filter(i => i.type === 'error').length, skipped: 0, duration: Date.now() - startTime };
+}
+// ─── Security Scan (from wp-security-review skill) ──────────────
+export function runSecurityScan(pluginPath) {
+    const startTime = Date.now();
+    const category = 'security-scan';
+    const issues = [];
+    const phpFiles = findPhpFiles(pluginPath);
+    const securityPatterns = [
+        // SQL Injection
+        { pattern: /\$wpdb->query\s*\(\s*["']/,
+            title: 'Direct $wpdb->query() without prepare()',
+            code: 'sec-sql-injection', severity: 'critical',
+            fix: 'Use $wpdb->prepare() for all queries with variables' },
+        { pattern: /\$wpdb->(?:get_results|get_var|get_row|get_col)\s*\(\s*["']/,
+            title: 'Direct $wpdb query without prepare()',
+            code: 'sec-sql-no-prepare', severity: 'critical',
+            fix: 'Wrap with $wpdb->prepare()' },
+        // XSS - echo/print without escaping
+        { pattern: /echo\s+\$_(?:GET|POST|REQUEST|SERVER)\s*\[/,
+            title: 'Direct echo of superglobal (XSS)',
+            code: 'sec-xss-superglobal', severity: 'critical',
+            fix: 'Use esc_html(), esc_attr(), or wp_kses()' },
+        { pattern: /echo\s+\$(?!this)[a-z_]+\s*;/,
+            title: 'echo of variable without escaping (potential XSS)',
+            code: 'sec-xss-unescaped', severity: 'high',
+            exclude: /esc_html|esc_attr|esc_url|wp_kses|absint|intval|\$this/ },
+        // Missing capability checks
+        { pattern: /wp_ajax_(?:nopriv_)?(\w+)/,
+            title: 'AJAX handler — verify current_user_can() is called',
+            code: 'sec-ajax-capability', severity: 'medium' },
+        // Dangerous functions
+        { pattern: /create_function\s*\(/,
+            title: 'create_function() is deprecated and dangerous',
+            code: 'sec-create-function', severity: 'critical',
+            fix: 'Use anonymous functions (closures) instead' },
+        { pattern: /\bunserialize\s*\(\s*\$/,
+            title: 'unserialize() on variable (object injection risk)',
+            code: 'sec-unserialize', severity: 'critical',
+            fix: 'Use maybe_unserialize() or json_decode()' },
+        { pattern: /\bextract\s*\(\s*\$/,
+            title: 'extract() can overwrite variables unexpectedly',
+            code: 'sec-extract', severity: 'high',
+            fix: 'Access array keys directly instead' },
+        // File operations
+        { pattern: /move_uploaded_file\s*\(/,
+            title: 'Direct file upload — check type validation',
+            code: 'sec-file-upload', severity: 'high',
+            fix: 'Use wp_handle_upload() with allowed MIME types' },
+        { pattern: /\binclude\s*\(\s*\$/,
+            title: 'Dynamic include with variable (LFI risk)',
+            code: 'sec-local-file-inclusion', severity: 'critical',
+            fix: 'Whitelist allowed files instead of using variables' },
+        // SSRF
+        { pattern: /wp_remote_(?:get|post|request)\s*\(\s*\$/,
+            title: 'Remote request with variable URL (potential SSRF)',
+            code: 'sec-ssrf', severity: 'medium',
+            fix: 'Validate/whitelist URLs before requesting' },
+    ];
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (!content)
+            continue;
+        const rel = relativePath(file, pluginPath);
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            // Skip comments
+            if (/^\s*(?:\/\/|\*|#)/.test(line))
+                continue;
+            for (const sp of securityPatterns) {
+                if (sp.pattern.test(line)) {
+                    if (sp.exclude && sp.exclude.test(line))
+                        continue;
+                    issues.push({
+                        id: generateTestId(category), category, severity: sp.severity, type: sp.severity === 'critical' ? 'error' : 'warning',
+                        title: sp.title, message: sp.title,
+                        file: rel, line: i + 1, code: sp.code, fix: sp.fix,
+                    });
+                }
+            }
+        }
+    }
+    const errors = issues.filter(i => i.type === 'error').length;
+    return { category, issues, passed: securityPatterns.length - (errors > 0 ? 1 : 0), failed: errors, skipped: 0, duration: Date.now() - startTime };
+}
+// ─── Performance Scan (from wp-performance-review skill) ────────
+export function runPerformanceScan(pluginPath) {
+    const startTime = Date.now();
+    const category = 'performance-scan';
+    const issues = [];
+    const phpFiles = findPhpFiles(pluginPath);
+    const perfPatterns = [
+        // Unbounded queries
+        { pattern: /posts_per_page['"]\s*=>\s*-1/,
+            title: 'Unbounded query: posts_per_page = -1',
+            code: 'perf-unbounded-query', severity: 'high',
+            fix: 'Set a reasonable limit (e.g., 100) and paginate' },
+        { pattern: /numberposts['"]\s*=>\s*-1/,
+            title: 'Unbounded query: numberposts = -1',
+            code: 'perf-unbounded-numberposts', severity: 'high',
+            fix: 'Set a reasonable limit' },
+        { pattern: /nopaging['"]\s*=>\s*true/,
+            title: 'nopaging = true fetches all posts',
+            code: 'perf-nopaging', severity: 'high',
+            fix: 'Remove nopaging and use pagination' },
+        // N+1 query patterns
+        { pattern: /get_post_meta\s*\([^)]*\)\s*;.*(?:foreach|while|for\s*\()/,
+            title: 'get_post_meta inside loop (N+1 pattern)',
+            code: 'perf-n-plus-1-meta', severity: 'high',
+            fix: 'Use update_meta_cache() before the loop or WP_Query with meta_query' },
+        // Remote requests in wrong hooks
+        { pattern: /add_action\s*\(\s*['"]init['"].*wp_remote_/,
+            title: 'Remote HTTP request in init hook (blocks page load)',
+            code: 'perf-remote-in-init', severity: 'critical',
+            fix: 'Move to a cron job or lazy-load on demand' },
+        { pattern: /add_action\s*\(\s*['"]wp_loaded['"].*wp_remote_/,
+            title: 'Remote HTTP request in wp_loaded (blocks page load)',
+            code: 'perf-remote-in-wp-loaded', severity: 'critical',
+            fix: 'Move to a cron job or lazy-load' },
+        // Redirect without exit
+        { pattern: /wp_redirect\s*\([^)]+\)\s*;(?!\s*(?:exit|die))/,
+            title: 'wp_redirect() without exit/die',
+            code: 'perf-redirect-no-exit', severity: 'high',
+            fix: 'Add exit; or die; after wp_redirect()' },
+        { pattern: /wp_safe_redirect\s*\([^)]+\)\s*;(?!\s*(?:exit|die))/,
+            title: 'wp_safe_redirect() without exit/die',
+            code: 'perf-safe-redirect-no-exit', severity: 'high',
+            fix: 'Add exit; after wp_safe_redirect()' },
+        // Loading all options
+        { pattern: /get_option\s*\(\s*['"][^'"]+['"]\s*\)\s*;.*(?:foreach|while|for\s*\()/,
+            title: 'get_option inside loop',
+            code: 'perf-option-in-loop', severity: 'medium',
+            fix: 'Cache the option value before the loop' },
+        // Enqueue on all pages
+        { pattern: /wp_enqueue_script\s*\([^)]+\)\s*;/,
+            title: 'Script enqueued — verify conditional loading',
+            code: 'perf-unconditional-enqueue', severity: 'low' },
+    ];
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (!content)
+            continue;
+        const rel = relativePath(file, pluginPath);
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (/^\s*(?:\/\/|\*|#)/.test(line))
+                continue;
+            for (const pp of perfPatterns) {
+                if (pp.pattern.test(line)) {
+                    if (pp.exclude && pp.exclude.test(line))
+                        continue;
+                    // Skip low severity for cleaner reports
+                    if (pp.severity === 'low')
+                        continue;
+                    issues.push({
+                        id: generateTestId(category), category, severity: pp.severity,
+                        type: pp.severity === 'critical' || pp.severity === 'high' ? 'error' : 'warning',
+                        title: pp.title, message: pp.title,
+                        file: rel, line: i + 1, code: pp.code, fix: pp.fix,
+                    });
+                }
+            }
+        }
+    }
+    const errors = issues.filter(i => i.type === 'error').length;
+    return { category, issues, passed: perfPatterns.length - (errors > 0 ? 1 : 0), failed: errors, skipped: 0, duration: Date.now() - startTime };
+}
+// ─── PCP Deep (from wp-pcp-compliance skill — 30 checks) ────────
+export function runPcpDeep(pluginPath) {
+    const startTime = Date.now();
+    const category = 'pcp-deep';
+    const issues = [];
+    const phpFiles = findPhpFiles(pluginPath);
+    // 1. Direct file access protection — every PHP file should check ABSPATH
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (!content)
+            continue;
+        const rel = relativePath(file, pluginPath);
+        // Skip main plugin file (has Plugin Name header) and uninstall.php
+        if (rel.split('/').length === 1 && !rel.includes('uninstall'))
+            continue;
+        if (/defined\s*\(\s*['"]ABSPATH['"]\s*\)|defined\s*\(\s*['"]WPINC['"]\s*\)|defined\s*\(\s*'WP_UNINSTALL_PLUGIN'\s*\)/.test(content))
+            continue;
+        // Only check files in includes/, src/, admin/ — not templates
+        if (/^(?:includes|src|admin|classes)\//i.test(rel)) {
+            issues.push({
+                id: generateTestId(category), category, severity: 'medium', type: 'warning',
+                title: 'Missing direct access protection',
+                message: 'PHP file lacks defined("ABSPATH") or defined("WPINC") check at top.',
+                file: rel, line: 1, code: 'pcp-no-abspath',
+                fix: 'Add: defined( "ABSPATH" ) || exit; at the top of the file',
+            });
+        }
+    }
+    // 2. Late escaping — output should be escaped at echo, not before
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (!content)
+            continue;
+        const rel = relativePath(file, pluginPath);
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (/^\s*(?:\/\/|\*|#)/.test(line))
+                continue;
+            // echo $var without escaping
+            if (/echo\s+\$\w+\s*;/.test(line) && !/esc_|wp_kses|absint|intval|\$this/.test(line)) {
+                issues.push({
+                    id: generateTestId(category), category, severity: 'high', type: 'error',
+                    title: 'echo without late escaping',
+                    message: 'Output must be escaped at the point of echo. Use esc_html(), esc_attr(), esc_url().',
+                    file: rel, line: i + 1, code: 'pcp-late-escaping',
+                });
+            }
+            // printf without escaping
+            if (/printf\s*\(/.test(line) && !/esc_html|esc_attr|wp_kses/.test(line) && /\$/.test(line)) {
+                issues.push({
+                    id: generateTestId(category), category, severity: 'medium', type: 'warning',
+                    title: 'printf with variable — verify escaping',
+                    message: 'Ensure variables in printf are escaped: esc_html(), esc_attr().',
+                    file: rel, line: i + 1, code: 'pcp-printf-escaping',
+                });
+            }
+        }
+    }
+    // 3. Script loading strategy (defer/async)
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (!content)
+            continue;
+        const rel = relativePath(file, pluginPath);
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            // Check wp_enqueue_script without strategy
+            if (/wp_enqueue_script\s*\(/.test(lines[i]) && !/strategy/.test(lines[i])) {
+                // Check next few lines for wp_script_add_data
+                const context = lines.slice(i, Math.min(lines.length, i + 5)).join('\n');
+                if (!/wp_script_add_data|strategy|defer|async/.test(context)) {
+                    issues.push({
+                        id: generateTestId(category), category, severity: 'low', type: 'info',
+                        title: 'Script enqueued without loading strategy',
+                        message: 'Consider adding defer/async strategy for non-critical scripts.',
+                        file: rel, line: i + 1, code: 'pcp-script-strategy',
+                    });
+                }
+            }
+        }
+    }
+    // 4. Prefixing — functions and classes should use plugin prefix
+    const slug = require('path').basename(pluginPath).replace(/-/g, '_');
+    const prefixPattern = new RegExp(`^(?:function|class)\\s+(${slug}|wbam|wbcom|bp_|bb_)`, 'i');
+    let unprefixedCount = 0;
+    const unprefixedSamples = [];
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (!content)
+            continue;
+        const rel = relativePath(file, pluginPath);
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const funcMatch = lines[i].match(/^(?:function)\s+([a-zA-Z_]\w*)\s*\(/);
+            if (funcMatch && !prefixPattern.test(lines[i]) && !/^__/.test(funcMatch[1]) && !/^(?:register|deactivate|activate|uninstall)/.test(funcMatch[1])) {
+                // Check if it's inside a class (skip — classes namespace functions)
+                const prevLines = lines.slice(Math.max(0, i - 20), i).join('\n');
+                if (/class\s+\w+/.test(prevLines))
+                    continue;
+                unprefixedCount++;
+                if (unprefixedSamples.length < 5) {
+                    unprefixedSamples.push({ file: rel, line: i + 1, name: funcMatch[1] });
+                }
+            }
+        }
+    }
+    if (unprefixedCount > 0) {
+        issues.push({
+            id: generateTestId(category), category, severity: 'medium', type: 'warning',
+            title: `${unprefixedCount} global functions without plugin prefix`,
+            message: `Functions like "${unprefixedSamples[0]?.name}" should be prefixed with plugin slug or namespaced. Locations: ${unprefixedSamples.map(s => `${s.file}:${s.line}`).join(', ')}`,
+            file: unprefixedSamples[0]?.file || '', line: unprefixedSamples[0]?.line || 0, code: 'pcp-no-prefix',
+        });
+    }
+    // 5. Conditional loading — plugin should check is_admin() for admin-only code
+    let hasConditionalLoading = false;
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (content && /is_admin\s*\(\)/.test(content)) {
+            hasConditionalLoading = true;
+            break;
+        }
+    }
+    if (!hasConditionalLoading && phpFiles.length > 5) {
+        issues.push({
+            id: generateTestId(category), category, severity: 'medium', type: 'warning',
+            title: 'No is_admin() conditional loading detected',
+            message: 'Plugin should use is_admin() to load admin-only code conditionally. Reduces frontend overhead.',
+            file: '', line: 0, code: 'pcp-no-conditional-load',
+            fix: 'Wrap admin-only includes with: if ( is_admin() ) { require_once ... }',
+        });
+    }
+    const errors = issues.filter(i => i.type === 'error').length;
+    return { category, issues, passed: 5 - (errors > 0 ? 1 : 0), failed: errors,
+        skipped: issues.filter(i => i.type === 'warning').length, duration: Date.now() - startTime };
 }
 // ─── Utilities ──────────────────────────────────────────────────
 function commandExists(cmd) {

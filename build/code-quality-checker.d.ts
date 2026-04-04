@@ -7,7 +7,7 @@
  * Parses JSON output from tools and converts to CheckerIssue[].
  */
 import type { CheckerResult } from './types.js';
-type CodeCheckType = 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep' | 'php-lint' | 'composer-audit' | 'i18n' | 'plugin-check' | 'bundle-size';
+type CodeCheckType = 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep' | 'php-lint' | 'composer-audit' | 'i18n' | 'plugin-check' | 'bundle-size' | 'security-scan' | 'performance-scan' | 'pcp-deep';
 export declare function runAllCodeChecks(pluginPath: string): CheckerResult[];
 export declare function runSingleCheck(pluginPath: string, check: CodeCheckType): CheckerResult;
 export declare function runPhpcs(pluginPath: string): CheckerResult;
@@ -21,4 +21,7 @@ export declare function runComposerAudit(pluginPath: string): CheckerResult;
 export declare function runI18nCheck(pluginPath: string): CheckerResult;
 export declare function runPluginCheck(pluginPath: string): CheckerResult;
 export declare function runBundleSize(pluginPath: string): CheckerResult;
+export declare function runSecurityScan(pluginPath: string): CheckerResult;
+export declare function runPerformanceScan(pluginPath: string): CheckerResult;
+export declare function runPcpDeep(pluginPath: string): CheckerResult;
 export {};
