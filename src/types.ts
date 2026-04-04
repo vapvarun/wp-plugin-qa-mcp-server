@@ -291,7 +291,12 @@ export type TestCategory =
   | 'eslint'
   | 'stylelint'
   | 'phpcompat'
-  | 'a11y-grep';
+  | 'a11y-grep'
+  | 'php-lint'
+  | 'composer-audit'
+  | 'i18n'
+  | 'plugin-check'
+  | 'bundle-size';
 
 export interface TestItem {
   id: string;

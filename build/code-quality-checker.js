@@ -19,6 +19,11 @@ export function runAllCodeChecks(pluginPath) {
     results.push(runStylelint(pluginPath));
     results.push(runPhpCompat(pluginPath));
     results.push(runA11yGrep(pluginPath));
+    results.push(runPhpLint(pluginPath));
+    results.push(runComposerAudit(pluginPath));
+    results.push(runI18nCheck(pluginPath));
+    results.push(runPluginCheck(pluginPath));
+    results.push(runBundleSize(pluginPath));
     return results;
 }
 export function runSingleCheck(pluginPath, check) {
@@ -29,6 +34,11 @@ export function runSingleCheck(pluginPath, check) {
         case 'stylelint': return runStylelint(pluginPath);
         case 'phpcompat': return runPhpCompat(pluginPath);
         case 'a11y-grep': return runA11yGrep(pluginPath);
+        case 'php-lint': return runPhpLint(pluginPath);
+        case 'composer-audit': return runComposerAudit(pluginPath);
+        case 'i18n': return runI18nCheck(pluginPath);
+        case 'plugin-check': return runPluginCheck(pluginPath);
+        case 'bundle-size': return runBundleSize(pluginPath);
         default: return skipResult('unknown', `Unknown check: ${check}`);
     }
 }
@@ -428,6 +438,198 @@ export function runA11yGrep(pluginPath) {
         skipped: 0,
         duration: Date.now() - startTime,
     };
+}
+// ─── PHP Lint ───────────────────────────────────────────────────
+export function runPhpLint(pluginPath) {
+    const startTime = Date.now();
+    const category = 'php-lint';
+    if (!commandExists('php'))
+        return skipResult(category, 'php not found in PATH.');
+    const phpFiles = findPhpFiles(pluginPath);
+    const issues = [];
+    for (const file of phpFiles) {
+        try {
+            execFileSync('php', ['-l', file], { encoding: 'utf-8', stdio: 'pipe', timeout: 10000 });
+        }
+        catch (err) {
+            const e = err;
+            const stderr = e.stderr || '';
+            const lineMatch = stderr.match(/on line (\d+)/);
+            const msgMatch = stderr.match(/(?:Parse|Fatal) error:\s*(.+?)(?:\s+in\s+|$)/);
+            issues.push({ id: generateTestId(category), category, severity: 'critical', type: 'error',
+                title: 'PHP syntax error', message: msgMatch ? msgMatch[1].trim() : stderr.trim(),
+                file: relativePath(file, pluginPath), line: lineMatch ? parseInt(lineMatch[1], 10) : 0,
+                code: 'php-parse-error' });
+        }
+    }
+    return { category, issues, passed: phpFiles.length - issues.length, failed: issues.length, skipped: 0, duration: Date.now() - startTime };
+}
+// ─── Composer Audit ─────────────────────────────────────────────
+export function runComposerAudit(pluginPath) {
+    const startTime = Date.now();
+    const category = 'composer-audit';
+    if (!commandExists('composer'))
+        return skipResult(category, 'composer not installed.');
+    if (!existsSync(join(pluginPath, 'composer.lock')) && !existsSync(join(pluginPath, 'composer.json')))
+        return skipResult(category, 'No composer.json found.');
+    const issues = [];
+    try {
+        const output = safeExec('composer', ['audit', '--format=json', '--no-interaction'], pluginPath);
+        try {
+            const data = JSON.parse(output);
+            for (const [pkg, advList] of Object.entries(data.advisories || {})) {
+                const list = advList;
+                for (const adv of list) {
+                    issues.push({ id: generateTestId(category), category, severity: 'critical', type: 'error',
+                        title: `${pkg}: ${adv.title}`,
+                        message: `${adv.title}${adv.cve ? ` (${adv.cve})` : ''}. Affected: ${adv.affectedVersions || 'unknown'}`,
+                        file: 'composer.lock', line: 0, code: adv.cve || 'security-advisory' });
+                }
+            }
+        }
+        catch { /* no vulnerabilities */ }
+    }
+    catch {
+        return skipResult(category, 'composer audit failed.');
+    }
+    return { category, issues, passed: issues.length === 0 ? 1 : 0, failed: issues.length, skipped: 0, duration: Date.now() - startTime };
+}
+// ─── i18n Check ─────────────────────────────────────────────────
+export function runI18nCheck(pluginPath) {
+    const startTime = Date.now();
+    const category = 'i18n';
+    const issues = [];
+    const phpFiles = findPhpFiles(pluginPath);
+    let textDomain = null;
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (!content)
+            continue;
+        const match = content.match(/Text\s+Domain:\s*(.+)/i);
+        if (match) {
+            textDomain = match[1].trim();
+            break;
+        }
+    }
+    if (!textDomain)
+        issues.push({ id: generateTestId(category), category, severity: 'high', type: 'error',
+            title: 'No Text Domain in plugin header', message: 'Required for translations.', file: '', line: 0, code: 'i18n-missing-text-domain' });
+    const langDir = join(pluginPath, 'languages');
+    if (!existsSync(langDir)) {
+        issues.push({ id: generateTestId(category), category, severity: 'medium', type: 'warning',
+            title: 'No languages/ directory', message: 'Plugin should have languages/ with a .pot file.',
+            file: '', line: 0, code: 'i18n-no-languages-dir', fix: 'Run: wp i18n make-pot . languages/' });
+    }
+    else if (findFilesByExt(langDir, '.pot').length === 0) {
+        issues.push({ id: generateTestId(category), category, severity: 'medium', type: 'warning',
+            title: 'No .pot file in languages/', message: 'Generate translation template.',
+            file: 'languages/', line: 0, code: 'i18n-no-pot-file', fix: 'Run: npx grunt makepot' });
+    }
+    let hasLoadTD = false;
+    for (const file of phpFiles) {
+        const c = safeReadFile(file);
+        if (c && /load_(?:plugin_)?textdomain/i.test(c)) {
+            hasLoadTD = true;
+            break;
+        }
+    }
+    if (!hasLoadTD && textDomain)
+        issues.push({ id: generateTestId(category), category, severity: 'high', type: 'error',
+            title: 'No load_plugin_textdomain() call', message: 'Required to load translations.', file: '', line: 0, code: 'i18n-no-load-textdomain' });
+    const errors = issues.filter(i => i.type === 'error').length;
+    return { category, issues, passed: 3 - errors, failed: errors, skipped: 0, duration: Date.now() - startTime };
+}
+// ─── Plugin Check PCP ───────────────────────────────────────────
+export function runPluginCheck(pluginPath) {
+    const startTime = Date.now();
+    const category = 'plugin-check';
+    const issues = [];
+    const phpFiles = findPhpFiles(pluginPath);
+    // Patterns to check: remote file_get_contents, base64_decode, direct cURL
+    const dangerousPatterns = [
+        { pattern: /file_get_contents\s*\(\s*['"]https?:/, title: 'file_get_contents() for remote requests', code: 'pcp-file-get-contents-remote', sev: 'high', typ: 'error', fix: 'Use wp_remote_get()' },
+        { pattern: /base64_decode\s*\(/, title: 'base64_decode() — review needed', code: 'pcp-base64-decode', sev: 'high', typ: 'warning' },
+        { pattern: /\bcurl_(?:init|exec|setopt)\s*\(/, title: 'Direct cURL — use WP HTTP API', code: 'pcp-direct-curl', sev: 'medium', typ: 'warning', fix: 'Use wp_remote_get()/wp_remote_post()' },
+    ];
+    for (const file of phpFiles) {
+        const content = safeReadFile(file);
+        if (!content)
+            continue;
+        const rel = relativePath(file, pluginPath);
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            for (const dp of dangerousPatterns) {
+                if (dp.pattern.test(lines[i])) {
+                    issues.push({ id: generateTestId(category), category, severity: dp.sev, type: dp.typ,
+                        title: dp.title, message: dp.title, file: rel, line: i + 1, code: dp.code, fix: dp.fix });
+                }
+            }
+        }
+    }
+    // readme.txt checks
+    const readme = safeReadFile(join(pluginPath, 'readme.txt'));
+    if (!readme) {
+        issues.push({ id: generateTestId(category), category, severity: 'high', type: 'error',
+            title: 'readme.txt missing', message: 'Required for WordPress.org.', file: '', line: 0, code: 'pcp-no-readme' });
+    }
+    else {
+        if (!/Stable tag:\s*\S+/i.test(readme))
+            issues.push({ id: generateTestId(category), category, severity: 'medium', type: 'warning',
+                title: 'Stable tag missing', message: 'Add Stable tag to readme.txt.', file: 'readme.txt', line: 0, code: 'pcp-no-stable-tag' });
+        if (!/== Changelog ==/i.test(readme))
+            issues.push({ id: generateTestId(category), category, severity: 'medium', type: 'warning',
+                title: 'No Changelog section', message: 'Add == Changelog == section.', file: 'readme.txt', line: 0, code: 'pcp-no-changelog' });
+        if (!/License:\s*GPL/i.test(readme))
+            issues.push({ id: generateTestId(category), category, severity: 'high', type: 'error',
+                title: 'GPL license not declared', message: 'Required for WordPress.org.', file: 'readme.txt', line: 0, code: 'pcp-no-license' });
+    }
+    if (!existsSync(join(pluginPath, 'uninstall.php')))
+        issues.push({ id: generateTestId(category), category, severity: 'medium', type: 'warning',
+            title: 'No uninstall.php', message: 'Plugins should clean up on delete.', file: '', line: 0, code: 'pcp-no-uninstall' });
+    const errors = issues.filter(i => i.type === 'error').length;
+    return { category, issues, passed: 0, failed: errors, skipped: issues.filter(i => i.type === 'warning').length, duration: Date.now() - startTime };
+}
+// ─── Bundle Size ────────────────────────────────────────────────
+export function runBundleSize(pluginPath) {
+    const startTime = Date.now();
+    const category = 'bundle-size';
+    const issues = [];
+    const { statSync: fStatSync } = require('fs');
+    const jsFiles = findFilesByExt(pluginPath, '.js').filter(f => !f.includes('node_modules') && !f.includes('vendor'));
+    const cssFiles = findFilesByExt(pluginPath, '.css').filter(f => !f.includes('node_modules') && !f.includes('vendor'));
+    let totalJs = 0, totalCss = 0;
+    for (const file of jsFiles) {
+        try {
+            const s = fStatSync(file);
+            totalJs += s.size;
+            if (s.size > 100 * 1024)
+                issues.push({ id: generateTestId(category), category, severity: 'medium', type: 'warning',
+                    title: `Large JS: ${relativePath(file, pluginPath)} (${(s.size / 1024).toFixed(0)}KB)`,
+                    message: 'File > 100KB.', file: relativePath(file, pluginPath), line: 0, code: 'bundle-large-file' });
+        }
+        catch { /* skip */ }
+    }
+    for (const file of cssFiles) {
+        try {
+            const s = fStatSync(file);
+            totalCss += s.size;
+            if (s.size > 100 * 1024)
+                issues.push({ id: generateTestId(category), category, severity: 'medium', type: 'warning',
+                    title: `Large CSS: ${relativePath(file, pluginPath)} (${(s.size / 1024).toFixed(0)}KB)`,
+                    message: 'CSS > 100KB.', file: relativePath(file, pluginPath), line: 0, code: 'bundle-large-css' });
+        }
+        catch { /* skip */ }
+    }
+    const total = totalJs + totalCss;
+    if (total > 500 * 1024)
+        issues.push({ id: generateTestId(category), category, severity: 'high', type: 'warning',
+            title: `Total: ${(total / 1024).toFixed(0)}KB`, message: 'JS+CSS > 500KB. Review asset loading.',
+            file: '', line: 0, code: 'bundle-total-large' });
+    issues.push({ id: generateTestId(category), category, severity: 'low', type: 'info',
+        title: `Bundle: ${jsFiles.length} JS (${(totalJs / 1024).toFixed(0)}KB), ${cssFiles.length} CSS (${(totalCss / 1024).toFixed(0)}KB)`,
+        message: `Total: ${(total / 1024).toFixed(0)}KB`, file: '', line: 0, code: 'bundle-summary' });
+    return { category, issues, passed: issues.filter(i => i.type === 'error').length === 0 ? 1 : 0,
+        failed: issues.filter(i => i.type === 'error').length, skipped: 0, duration: Date.now() - startTime };
 }
 // ─── Utilities ──────────────────────────────────────────────────
 function commandExists(cmd) {

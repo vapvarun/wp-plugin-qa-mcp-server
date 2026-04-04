@@ -233,7 +233,7 @@ export interface PluginManifest {
         totalLines: number;
     };
 }
-export type TestCategory = 'smoke' | 'functionality' | 'api' | 'database' | 'browser' | 'ux' | 'templates' | 'a11y' | 'admin-eval' | 'frontend-eval' | 'marketing' | 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep';
+export type TestCategory = 'smoke' | 'functionality' | 'api' | 'database' | 'browser' | 'ux' | 'templates' | 'a11y' | 'admin-eval' | 'frontend-eval' | 'marketing' | 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep' | 'php-lint' | 'composer-audit' | 'i18n' | 'plugin-check' | 'bundle-size';
 export interface TestItem {
     id: string;
     category: TestCategory;

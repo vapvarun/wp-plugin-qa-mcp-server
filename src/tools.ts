@@ -315,7 +315,7 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_run_code_checks',
     description:
-      'Run ALL code quality checks on a plugin: PHPCS (WordPress coding standards), PHPStan (static analysis), ESLint (JavaScript), Stylelint (CSS), PHP Compatibility (7.4-8.4), and static a11y grep (outline:none, empty links, div onclick, missing alt). Returns unified report with issues from all tools. Gracefully skips tools that are not installed.',
+      'Run ALL 11 code quality checks on a plugin: PHPCS, PHPStan, ESLint, Stylelint, PHP Compatibility, a11y grep, PHP lint (syntax), Composer audit (vulnerabilities), i18n (translations), Plugin Check PCP (WordPress.org compliance), and bundle size analysis. Returns unified report. Gracefully skips tools not installed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -330,7 +330,7 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_check_code_quality',
     description:
-      'Run a SINGLE code quality check: phpcs, phpstan, eslint, stylelint, phpcompat, or a11y-grep. Use this when you want to run just one tool instead of all of them.',
+      'Run a SINGLE code quality check. Options: phpcs, phpstan, eslint, stylelint, phpcompat, a11y-grep, php-lint, composer-audit, i18n, plugin-check, bundle-size.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -340,7 +340,7 @@ export const tools: Tool[] = [
         },
         check: {
           type: 'string',
-          enum: ['phpcs', 'phpstan', 'eslint', 'stylelint', 'phpcompat', 'a11y-grep'],
+          enum: ['phpcs', 'phpstan', 'eslint', 'stylelint', 'phpcompat', 'a11y-grep', 'php-lint', 'composer-audit', 'i18n', 'plugin-check', 'bundle-size'],
           description: 'Which quality check to run',
         },
       },
