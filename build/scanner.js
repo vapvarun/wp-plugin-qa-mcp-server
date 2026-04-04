@@ -44,11 +44,12 @@ export function scanPlugin(pluginPath) {
     const imageSizes = scanImageSizes(phpFiles, phpContents, pluginPath);
     const blockPatterns = scanBlockPatterns(phpFiles, phpContents, pluginPath);
     const integrations = scanIntegrations(phpFiles, phpContents, pluginPath);
-    // Cross-layer wiring analysis
+    // Cross-layer wiring analysis (5 checks)
     const jsAjaxCalls = scanJsAjaxCalls(jsFiles, jsContents, pluginPath);
     const jsEventHandlers = scanJsEventHandlers(jsFiles, jsContents, pluginPath);
     const localizeScripts = scanLocalizeScripts(phpFiles, phpContents, pluginPath);
-    const wiringIssues = analyzeWiring(ajaxHandlers, jsAjaxCalls, jsEventHandlers, localizeScripts);
+    const templateSelectors = scanTemplateSelectors(phpFiles, phpContents, pluginPath);
+    const wiringIssues = analyzeWiring(ajaxHandlers, jsAjaxCalls, jsEventHandlers, localizeScripts, templateSelectors);
     return {
         header,
         pluginPath,
@@ -874,54 +875,136 @@ function scanLocalizeScripts(phpFiles, contents, pluginPath) {
     }
     return scripts;
 }
-// --- Cross-Layer: Wiring Analysis ---
-function analyzeWiring(ajaxHandlers, jsAjaxCalls, _jsEventHandlers, _localizeScripts) {
+// --- Cross-Layer: Template Selectors (interactive HTML) ---
+function scanTemplateSelectors(phpFiles, contents, pluginPath) {
+    const selectors = [];
+    const classPattern = /class\s*=\s*["']([^"']*(?:btn|button|action|delete|submit|toggle|trigger|dismiss|close|confirm|cancel)[^"']*)["']/gi;
+    const dataActionPattern = /data-action\s*=\s*["']([^"']+)["']/gi;
+    for (const file of phpFiles) {
+        const content = contents.get(file) || '';
+        const rel = relativePath(file, pluginPath);
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            // data-action attributes (explicit JS triggers)
+            dataActionPattern.lastIndex = 0;
+            let match;
+            while ((match = dataActionPattern.exec(line)) !== null) {
+                const contextLines = lines.slice(Math.max(0, i - 5), Math.min(lines.length, i + 10)).join('\n');
+                const nonceMatch = contextLines.match(/wp_(?:create_)?nonce(?:_field)?\s*\(\s*['"]([^'"]+)['"]/);
+                selectors.push({
+                    selector: `[data-action="${match[1]}"]`,
+                    element: 'data-action',
+                    hasDataAction: true,
+                    dataAction: match[1],
+                    nonceField: nonceMatch ? nonceMatch[1] : undefined,
+                    file: rel, line: i + 1,
+                });
+            }
+            // Classes with action-like names on interactive elements
+            classPattern.lastIndex = 0;
+            while ((match = classPattern.exec(line)) !== null) {
+                const actionClasses = match[1].split(/\s+/).filter(c => /btn|button|action|delete|submit|toggle|trigger|dismiss|close|confirm|cancel/i.test(c));
+                if (actionClasses.length === 0)
+                    continue;
+                const contextLines = lines.slice(Math.max(0, i - 5), Math.min(lines.length, i + 10)).join('\n');
+                const nonceMatch = contextLines.match(/wp_(?:create_)?nonce(?:_field)?\s*\(\s*['"]([^'"]+)['"]/);
+                selectors.push({
+                    selector: '.' + actionClasses.join('.'),
+                    element: 'class',
+                    hasDataAction: false,
+                    nonceField: nonceMatch ? nonceMatch[1] : undefined,
+                    file: rel, line: i + 1,
+                });
+            }
+        }
+    }
+    return selectors;
+}
+// --- Cross-Layer: Wiring Analysis (5 checks) ---
+function analyzeWiring(ajaxHandlers, jsAjaxCalls, jsEventHandlers, localizeScripts, templateSelectors) {
     const issues = [];
     const registeredActions = new Set(ajaxHandlers.map(h => h.action));
     const calledActions = new Set(jsAjaxCalls.map(c => c.action));
-    // Check 1: JS calls action but no PHP handler
+    const jsSelectors = new Set(jsEventHandlers.map(h => h.selector));
+    // Check 1: JS calls action but no PHP handler (broken AJAX)
     for (const call of jsAjaxCalls) {
         if (!registeredActions.has(call.action)) {
             issues.push({
-                type: 'broken-ajax',
-                severity: 'critical',
-                source: `${call.file}:${call.line}`,
-                target: `wp_ajax_${call.action}`,
-                details: `JS calls action "${call.action}" but no wp_ajax_${call.action} handler is registered`,
-                file: call.file,
-                line: call.line,
+                type: 'broken-ajax', severity: 'critical',
+                source: `${call.file}:${call.line}`, target: `wp_ajax_${call.action}`,
+                details: `JS calls action "${call.action}" but no wp_ajax_${call.action} handler exists`,
+                file: call.file, line: call.line,
             });
         }
     }
-    // Check 2: PHP handler registered but never called from JS
+    // Check 2: PHP handler registered but never called from JS (dead code)
     for (const handler of ajaxHandlers) {
         if (!calledActions.has(handler.action)) {
             if (['heartbeat'].some(p => handler.action.startsWith(p)))
                 continue;
             issues.push({
-                type: 'dead-handler',
-                severity: 'medium',
-                source: `${handler.file}:${handler.line}`,
-                target: handler.action,
-                details: `PHP handler for "${handler.action}" is registered but never called from JS`,
-                file: handler.file,
-                line: handler.line,
+                type: 'dead-handler', severity: 'medium',
+                source: `${handler.file}:${handler.line}`, target: handler.action,
+                details: `PHP handler "${handler.action}" registered but never called from JS`,
+                file: handler.file, line: handler.line,
             });
         }
     }
-    // Check 3: AJAX handler missing nonce check
+    // Check 3: AJAX handler missing nonce verification (CSRF risk)
     for (const handler of ajaxHandlers) {
         if (!handler.hasNonceCheck) {
             issues.push({
-                type: 'nonce-mismatch',
-                severity: 'critical',
-                source: `${handler.file}:${handler.line}`,
-                target: handler.action,
+                type: 'nonce-mismatch', severity: 'critical',
+                source: `${handler.file}:${handler.line}`, target: handler.action,
                 details: `AJAX handler "${handler.action}" has no nonce verification (CSRF risk)`,
-                file: handler.file,
-                line: handler.line,
+                file: handler.file, line: handler.line,
             });
         }
+    }
+    // Check 4: Template selectors with no matching JS handler (button does nothing)
+    if (templateSelectors) {
+        for (const tpl of templateSelectors) {
+            if (!tpl.hasDataAction)
+                continue; // Only check explicit data-action elements
+            const hasHandler = jsEventHandlers.some(h => {
+                const hSel = h.selector.toLowerCase();
+                const tSel = (tpl.dataAction || '').toLowerCase();
+                return hSel.includes(tSel) || hSel.includes(tpl.selector.replace(/[\[\]"=]/g, ''));
+            });
+            // Also check if any JS file references this data-action value
+            if (!hasHandler) {
+                issues.push({
+                    type: 'orphaned-selector', severity: 'high',
+                    source: `${tpl.file}:${tpl.line}`, target: tpl.selector,
+                    details: `Template has data-action="${tpl.dataAction}" but no JS handler listens for it`,
+                    file: tpl.file, line: tpl.line,
+                });
+            }
+        }
+    }
+    // Check 5: Nonce consistency — PHP creates nonces but JS doesn't send them
+    const phpNonces = new Set();
+    for (const script of localizeScripts) {
+        for (const [key, value] of Object.entries(script.data)) {
+            if (/nonce|security|_wpnonce/i.test(key) && value)
+                phpNonces.add(value);
+        }
+    }
+    if (templateSelectors) {
+        for (const tpl of templateSelectors) {
+            if (tpl.nonceField)
+                phpNonces.add(tpl.nonceField);
+        }
+    }
+    const jsNonces = new Set(jsAjaxCalls.filter(c => c.nonceKey).map(c => c.nonceKey));
+    if (phpNonces.size > 0 && jsNonces.size === 0 && jsAjaxCalls.length > 0) {
+        issues.push({
+            type: 'nonce-inconsistency', severity: 'high',
+            source: 'PHP templates/localize', target: 'JS AJAX calls',
+            details: `PHP creates nonces (${Array.from(phpNonces).join(', ')}) but no JS AJAX call sends a nonce — requests will fail verification`,
+            file: '', line: 0,
+        });
     }
     return issues;
 }

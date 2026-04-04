@@ -217,8 +217,18 @@ export interface LocalizeScriptInfo {
   line: number;
 }
 
+export interface TemplateSelector {
+  selector: string;
+  element: string;
+  hasDataAction: boolean;
+  dataAction?: string;
+  nonceField?: string;
+  file: string;
+  line: number;
+}
+
 export interface WiringIssue {
-  type: 'broken-ajax' | 'dead-handler' | 'nonce-mismatch' | 'orphaned-selector' | 'missing-localize';
+  type: 'broken-ajax' | 'dead-handler' | 'nonce-mismatch' | 'orphaned-selector' | 'missing-localize' | 'nonce-inconsistency';
   severity: Severity;
   source: string;
   target: string;
