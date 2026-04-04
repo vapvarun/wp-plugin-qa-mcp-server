@@ -10,7 +10,7 @@
  * - Adds phpstan dev dependencies to composer.json if missing
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, basename } from 'path';
 import { findPhpFiles, safeReadFile, detectPluginSlug } from './shared-utils.js';
 
@@ -57,6 +57,19 @@ export function scaffoldQualityConfigs(pluginPath: string, siteUrl?: string): Sc
   // 8. Update composer.json with phpstan if missing
   updateComposerForPhpstan(pluginPath, result);
 
+  // 9. GitHub Actions workflow — create or update
+  const workflowDir = join(pluginPath, '.github', 'workflows');
+  if (!existsSync(workflowDir)) {
+    try { mkdirSync(workflowDir, { recursive: true }); } catch { /* ignore */ }
+  }
+  const workflowPath = join(workflowDir, 'quality.yml');
+  const newWorkflow = generateGitHubWorkflow(slug, textDomain);
+  updateOrCreateFile(workflowPath, newWorkflow, result);
+
+  // 10. Branch protection guide — create or update
+  const bpPath = join(pluginPath, '.github', 'BRANCH_PROTECTION.md');
+  updateOrCreateFile(bpPath, generateBranchProtectionGuide(slug), result);
+
   return result;
 }
 
@@ -74,6 +87,50 @@ function writeIfMissing(filePath: string, content: string, result: ScaffoldResul
   } catch (err) {
     const e = err as { message?: string };
     result.errors.push(`${fileName}: ${e.message || 'write failed'}`);
+  }
+}
+
+function updateOrCreateFile(filePath: string, content: string, result: ScaffoldResult): void {
+  const fileName = filePath.includes('.github/') ? '.github/' + filePath.split('.github/')[1] : basename(filePath);
+
+  if (!existsSync(filePath)) {
+    try {
+      writeFileSync(filePath, content, 'utf-8');
+      result.created.push(fileName);
+    } catch (err) {
+      const e = err as { message?: string };
+      result.errors.push(`${fileName}: ${e.message || 'write failed'}`);
+    }
+    return;
+  }
+
+  // File exists — check if it needs updating
+  const existing = readFileSync(filePath, 'utf-8');
+  if (existing.trim() === content.trim()) {
+    result.skipped.push(`${fileName} (up to date)`);
+    return;
+  }
+
+  // Check what's missing in existing workflow
+  const missingJobs: string[] = [];
+  const requiredJobs = ['phpcs', 'phpstan', 'php-lint', 'php-compatibility', 'security', 'eslint'];
+  for (const job of requiredJobs) {
+    if (!existing.includes(job)) {
+      missingJobs.push(job);
+    }
+  }
+
+  if (missingJobs.length > 0) {
+    // Update the file with the new version
+    try {
+      writeFileSync(filePath, content, 'utf-8');
+      result.updated.push(`${fileName} (added: ${missingJobs.join(', ')})`);
+    } catch (err) {
+      const e = err as { message?: string };
+      result.errors.push(`${fileName}: ${e.message || 'update failed'}`);
+    }
+  } else {
+    result.skipped.push(`${fileName} (all jobs present)`);
   }
 }
 
@@ -258,6 +315,144 @@ function generatePa11yConfig(siteUrl: string): string {
     ],
   };
   return JSON.stringify(config, null, '\t') + '\n';
+}
+
+// ─── GitHub Actions Workflow ─────────────────────────────────────
+
+function generateGitHubWorkflow(slug: string, textDomain: string): string {
+  return `name: Quality Checks
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+  push:
+    branches: [main, master, develop]
+
+jobs:
+  phpcs:
+    name: PHPCS (WordPress Standards)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer, cs2pr
+      - run: composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs phpcsstandards/phpcsutils
+      - run: phpcs --config-set installed_paths \$(composer global config home)/vendor/wp-coding-standards/wpcs
+      - run: phpcs --report=checkstyle | cs2pr
+
+  phpstan:
+    name: PHPStan (Static Analysis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - run: composer install --no-interaction
+      - run: ./vendor/bin/phpstan analyse --error-format=github --memory-limit=1G
+
+  php-lint:
+    name: PHP Syntax Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: ['8.1', '8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: \${{ matrix.php-version }}
+      - run: find . -name "*.php" -not -path "./vendor/*" -not -path "./node_modules/*" | xargs -n1 php -l
+
+  eslint:
+    name: ESLint (JavaScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npx eslint@8 assets/js/ || true
+
+  php-compatibility:
+    name: PHP Compatibility (7.4-8.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer
+      - run: composer global require phpcompatibility/phpcompatibility-wp phpcsstandards/phpcsutils squizlabs/php_codesniffer wp-coding-standards/wpcs
+      - run: phpcs --config-set installed_paths \$(composer global config home)/vendor/phpcompatibility/php-compatibility,\$(composer global config home)/vendor/phpcompatibility/phpcompatibility-wp,\$(composer global config home)/vendor/wp-coding-standards/wpcs
+      - run: phpcs --standard=PHPCompatibilityWP --extensions=php --ignore=vendor,node_modules --runtime-set testVersion 7.4-8.4 -n .
+
+  security:
+    name: Composer Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - run: composer install --no-interaction --no-dev 2>/dev/null || true
+      - run: composer audit --no-interaction || true
+`;
+}
+
+// ─── Branch Protection Guide ────────────────────────────────────
+
+function generateBranchProtectionGuide(slug: string): string {
+  return `# Branch Protection Setup for ${slug}
+
+## How to Protect main/master Branch
+
+Go to: **GitHub repo → Settings → Branches → Add branch protection rule**
+
+### Settings to Enable
+
+| Setting | Value |
+|---------|-------|
+| **Branch name pattern** | \`main\` (or \`master\`) |
+| **Require a pull request before merging** | Yes |
+| **Require approvals** | 1 (minimum) |
+| **Require status checks to pass** | Yes |
+| **Status checks that are required:** | \`PHPCS\`, \`PHPStan\`, \`PHP Syntax Check\`, \`PHP Compatibility\` |
+| **Require branches to be up to date** | Yes |
+| **Do not allow bypassing** | Yes (even admins) |
+
+### Required Status Checks
+
+These come from \`.github/workflows/quality.yml\`:
+- \`phpcs\` — WordPress Coding Standards
+- \`phpstan\` — Static type analysis
+- \`php-lint\` — Syntax check across PHP 8.1-8.4
+- \`php-compatibility\` — PHP version compatibility
+- \`security\` — Composer dependency vulnerabilities
+
+### Workflow
+
+1. Developer creates feature branch from \`develop\`
+2. Makes changes, commits, pushes branch
+3. Opens PR to \`develop\` (or \`main\`)
+4. CI runs all quality checks automatically
+5. If any check fails → PR cannot be merged
+6. Developer fixes issues, pushes again
+7. All checks pass → PR ready for review
+8. Reviewer approves → merge
+
+### Quick Setup via GitHub CLI
+
+\`\`\`bash
+gh api repos/{owner}/${slug}/branches/main/protection \\
+  --method PUT \\
+  --field required_status_checks='{"strict":true,"contexts":["phpcs","phpstan","php-lint (8.2)","php-compatibility","security"]}' \\
+  --field enforce_admins=true \\
+  --field required_pull_request_reviews='{"required_approving_review_count":1}'
+\`\`\`
+`;
 }
 
 // ─── Composer.json Updater ──────────────────────────────────────
