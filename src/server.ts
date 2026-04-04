@@ -65,93 +65,47 @@ export class WpPluginQaServer {
 
       try {
         switch (name) {
+          // 1. Discovery
           case 'wppqa_scan_plugin':
             return this.handleScanPlugin(toolArgs.plugin_path as string);
 
-          case 'wppqa_check_api':
-            return await this.handleCheckApi(
-              toolArgs.plugin_path as string,
-              toolArgs.site_url as string,
-            );
+          // 2-4. Code Quality
+          case 'wppqa_setup_quality':
+            return this.handleSetupQuality(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined);
+          case 'wppqa_run_code_checks':
+            return this.handleRunCodeChecks(toolArgs.plugin_path as string);
+          case 'wppqa_check_code_quality':
+            return this.handleCheckCodeQuality(toolArgs.plugin_path as string, toolArgs.check as string);
 
-          case 'wppqa_check_database':
-            return await this.handleCheckDatabase(
-              toolArgs.plugin_path as string,
-              toolArgs.site_url as string,
-            );
-
-          case 'wppqa_check_browser':
-            return this.handleCheckBrowser(
-              toolArgs.plugin_path as string,
-              toolArgs.site_url as string,
-              toolArgs.mode as string | undefined,
-            );
-
-          case 'wppqa_check_ux':
-            return this.handleCheckUx(toolArgs.plugin_path as string);
-
-          case 'wppqa_check_templates':
-            return this.handleCheckTemplates(toolArgs.plugin_path as string);
-
+          // 5. Accessibility
           case 'wppqa_check_a11y':
             return this.handleCheckA11y(toolArgs.plugin_path as string);
 
-          case 'wppqa_evaluate_admin':
-            return this.handleEvaluateAdmin(toolArgs.plugin_path as string);
+          // 6. Product Evaluation (merged admin+frontend+marketing)
+          case 'wppqa_evaluate_product':
+            return this.handleEvaluateProduct(toolArgs.plugin_path as string, toolArgs.focus as string | undefined);
 
-          case 'wppqa_evaluate_frontend':
-            return this.handleEvaluateFrontend(toolArgs.plugin_path as string);
+          // 7-8. Static checks
+          case 'wppqa_check_ux':
+            return this.handleCheckUx(toolArgs.plugin_path as string);
+          case 'wppqa_check_templates':
+            return this.handleCheckTemplates(toolArgs.plugin_path as string);
 
-          case 'wppqa_evaluate_marketing':
-            return this.handleEvaluateMarketing(toolArgs.plugin_path as string);
+          // 9-11. Live site checks
+          case 'wppqa_check_api':
+            return await this.handleCheckApi(toolArgs.plugin_path as string, toolArgs.site_url as string);
+          case 'wppqa_check_database':
+            return await this.handleCheckDatabase(toolArgs.plugin_path as string, toolArgs.site_url as string);
+          case 'wppqa_check_browser':
+            return this.handleCheckBrowser(toolArgs.plugin_path as string, toolArgs.site_url as string, toolArgs.mode as string | undefined);
 
-          case 'wppqa_analyze_gaps':
-            return this.handleAnalyzeGaps(toolArgs.plugin_path as string);
+          // 12. Market Analysis (merged gaps + competitive)
+          case 'wppqa_analyze_market':
+            return await this.handleAnalyzeMarket(toolArgs.plugin_path as string, toolArgs.search_keywords as string | undefined);
 
-          case 'wppqa_competitive_analysis':
-            return await this.handleCompetitiveAnalysis(
-              toolArgs.plugin_path as string,
-              toolArgs.search_keywords as string | undefined,
-              toolArgs.max_competitors as number | undefined,
-            );
-
-          case 'wppqa_generate_report':
-            return this.handleGenerateReport(
-              toolArgs.plugin_path as string,
-              toolArgs.results as string,
-              toolArgs.format as string | undefined,
-            );
-
-          case 'wppqa_run_automated_qa':
-            return await this.handleAutomatedQa(
-              toolArgs.plugin_path as string,
-              toolArgs.site_url as string | undefined,
-            );
-
+          // 13. Full Audit (master tool)
           case 'wppqa_audit_plugin':
-            return await this.handleAuditPlugin(
-              toolArgs.plugin_path as string,
-              toolArgs.site_url as string | undefined,
-              toolArgs.format as string | undefined,
-            );
-
-          // ─── Code Quality Tools ───────────────────────────────
-          case 'wppqa_setup_quality':
-            return this.handleSetupQuality(
-              toolArgs.plugin_path as string,
-              toolArgs.site_url as string | undefined,
-            );
-
-          case 'wppqa_run_code_checks':
-            return this.handleRunCodeChecks(
-              toolArgs.plugin_path as string,
-            );
-
-          case 'wppqa_check_code_quality':
-            return this.handleCheckCodeQuality(
-              toolArgs.plugin_path as string,
-              toolArgs.check as string,
-            );
+            return await this.handleAuditPlugin(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined, toolArgs.format as string | undefined);
 
           default:
             return this.errorResult(`Unknown tool: ${name}`);
@@ -208,119 +162,75 @@ export class WpPluginQaServer {
 
   private handleCheckA11y(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const result = checkAccessibility(pluginPath);
-    return this.formatCheckerResult(result);
+    // Run both static a11y analysis AND grep-based checks
+    const staticResult = checkAccessibility(pluginPath);
+    const grepResult = runSingleCheck(pluginPath, 'a11y-grep');
+
+    // Merge issues from both
+    const mergedIssues = [...staticResult.issues, ...grepResult.issues];
+    const mergedResult: CheckerResult = {
+      category: 'a11y',
+      issues: mergedIssues,
+      passed: staticResult.passed + grepResult.passed,
+      failed: staticResult.failed + grepResult.failed,
+      skipped: staticResult.skipped + grepResult.skipped,
+      duration: staticResult.duration + grepResult.duration,
+    };
+    return this.formatCheckerResult(mergedResult);
   }
 
-  private handleEvaluateAdmin(pluginPath: string): CallToolResult {
+  private handleEvaluateProduct(pluginPath: string, focus?: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const manifest = scanPlugin(pluginPath);
-    const result = evaluateAdmin(manifest, pluginPath);
-    return this.formatCheckerResult(result);
+    const results: CheckerResult[] = [];
+    const area = focus || 'all';
+
+    if (area === 'all' || area === 'admin') results.push(evaluateAdmin(manifest, pluginPath));
+    if (area === 'all' || area === 'frontend') results.push(evaluateFrontend(manifest, pluginPath));
+    if (area === 'all' || area === 'marketing') results.push(evaluateMarketing(manifest, pluginPath));
+
+    // Merge all results
+    const allIssues = results.flatMap(r => r.issues);
+    let msg = `PRODUCT EVALUATION (${area.toUpperCase()})\n${'='.repeat(50)}\n\n`;
+
+    for (const r of results) {
+      const errors = r.issues.filter(i => i.type === 'error').length;
+      const warnings = r.issues.filter(i => i.type === 'warning').length;
+      msg += `${r.category.toUpperCase()}: ${errors} errors, ${warnings} warnings [${r.duration}ms]\n`;
+    }
+
+    msg += `\nTotal: ${allIssues.filter(i => i.type === 'error').length} errors, ${allIssues.filter(i => i.type === 'warning').length} warnings\n\n`;
+
+    for (const issue of allIssues.slice(0, 30)) {
+      msg += `[${issue.type}] ${issue.title}\n`;
+      if (issue.file) msg += `  ${issue.file}${issue.line > 0 ? ':' + issue.line : ''}\n`;
+      if (issue.fix) msg += `  Fix: ${issue.fix}\n`;
+      msg += '\n';
+    }
+    if (allIssues.length > 30) msg += `... and ${allIssues.length - 30} more\n`;
+
+    return this.successResult(msg);
   }
 
-  private handleEvaluateFrontend(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const manifest = scanPlugin(pluginPath);
-    const result = evaluateFrontend(manifest, pluginPath);
-    return this.formatCheckerResult(result);
-  }
-
-  private handleEvaluateMarketing(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const manifest = scanPlugin(pluginPath);
-    const result = evaluateMarketing(manifest, pluginPath);
-    return this.formatCheckerResult(result);
-  }
-
-  private handleAnalyzeGaps(pluginPath: string): CallToolResult {
+  private async handleAnalyzeMarket(pluginPath: string, searchKeywords?: string): Promise<CallToolResult> {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const manifest = scanPlugin(pluginPath);
 
+    // Gap analysis
     const gapResult = analyzeGaps(manifest);
     let output = formatGapAnalysis(gapResult);
 
+    // Category expectations
     const categoryResult = analyzeExpectations(manifest);
     output += '\n\n' + formatCategoryAnalysis(categoryResult);
 
-    output += `\n${'='.repeat(50)}\nJSON: ${JSON.stringify({ technicalGaps: gapResult, customerExpectations: categoryResult })}\n`;
-    return this.successResult(output);
-  }
-
-  private async handleCompetitiveAnalysis(
-    pluginPath: string, searchKeywords?: string, maxCompetitors?: number,
-  ): Promise<CallToolResult> {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const limit = Math.min(Math.max(maxCompetitors || 10, 3), 15);
-    const report = await analyzeCompetitors(pluginPath, searchKeywords, limit);
-    const markdown = formatCompetitiveReport(report);
-    let output = markdown;
-    output += `\n${'='.repeat(60)}\nJSON: ${JSON.stringify(report)}\n`;
-    return this.successResult(output);
-  }
-
-  private handleGenerateReport(pluginPath: string, resultsJson: string, format?: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    if (!resultsJson) return this.errorResult('results JSON is required');
-
+    // Competitive analysis
     try {
-      const results: CheckerResult[] = JSON.parse(resultsJson);
-      const manifest = scanPlugin(pluginPath);
-      const report = buildReport(
-        manifest.header.name || manifest.header.slug,
-        manifest.header.version,
-        results,
-      );
-
-      switch (format) {
-        case 'json':
-          return this.successResult(exportJson(report));
-        case 'sarif':
-          return this.successResult(exportSarif(report));
-        case 'junit':
-          return this.successResult(exportJunit(report));
-        case 'markdown':
-        default:
-          return this.successResult(formatReport(report));
-      }
-    } catch (e) {
-      return this.errorResult(`Invalid results JSON: ${e instanceof Error ? e.message : String(e)}`);
+      const report = await analyzeCompetitors(pluginPath, searchKeywords, 10);
+      output += '\n\n' + formatCompetitiveReport(report);
+    } catch {
+      output += '\n\nCompetitive analysis: skipped (network error or no results)';
     }
-  }
-
-  private async handleAutomatedQa(pluginPath: string, siteUrl?: string): Promise<CallToolResult> {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-
-    const manifest = scanPlugin(pluginPath);
-    const allResults: CheckerResult[] = [];
-
-    // Product quality checks (always run)
-    allResults.push(checkUx(pluginPath));
-    allResults.push(checkTemplates(pluginPath));
-    allResults.push(checkAccessibility(pluginPath));
-    allResults.push(evaluateAdmin(manifest, pluginPath));
-    allResults.push(evaluateFrontend(manifest, pluginPath));
-    allResults.push(evaluateMarketing(manifest, pluginPath));
-
-    // Live site checks (only if site_url provided)
-    if (siteUrl) {
-      allResults.push(await checkApi(manifest, siteUrl));
-      allResults.push(await checkDatabase(manifest, siteUrl));
-      allResults.push(checkBrowser(manifest, siteUrl));
-    }
-
-    const report = buildReport(
-      manifest.header.name || manifest.header.slug,
-      manifest.header.version,
-      allResults,
-    );
-
-    let output = formatReport(report);
-    output += `\n\n## Product Evaluation Summary\n`;
-    output += `Automated checks executed: ${allResults.length}\n`;
-    output += `Categories: UX, Templates, A11y, Admin Eval, Frontend Eval, Marketing`;
-    if (siteUrl) output += `, API, Database, Browser`;
-    output += '\n';
 
     return this.successResult(output);
   }
@@ -331,45 +241,71 @@ export class WpPluginQaServer {
     // Step 1: Scan plugin
     const manifest = scanPlugin(pluginPath);
 
-    // Step 2: Gap analysis
-    const gapResult = analyzeGaps(manifest);
+    // Step 2: Code quality checks (11 checks)
+    const codeResults = runAllCodeChecks(pluginPath);
 
-    // Step 3: Run all product evaluation checks
-    const allResults: CheckerResult[] = [];
-    allResults.push(checkUx(pluginPath));
-    allResults.push(checkTemplates(pluginPath));
-    allResults.push(checkAccessibility(pluginPath));
-    allResults.push(evaluateAdmin(manifest, pluginPath));
-    allResults.push(evaluateFrontend(manifest, pluginPath));
-    allResults.push(evaluateMarketing(manifest, pluginPath));
+    // Step 3: Product evaluation checks
+    const productResults: CheckerResult[] = [];
+    productResults.push(checkUx(pluginPath));
+    productResults.push(checkTemplates(pluginPath));
+    productResults.push(checkAccessibility(pluginPath));
+    productResults.push(evaluateAdmin(manifest, pluginPath));
+    productResults.push(evaluateFrontend(manifest, pluginPath));
+    productResults.push(evaluateMarketing(manifest, pluginPath));
 
-    // Live site checks
+    // Step 4: Live site checks (only if site_url provided)
     if (siteUrl) {
-      allResults.push(await checkApi(manifest, siteUrl));
-      allResults.push(await checkDatabase(manifest, siteUrl));
-      allResults.push(checkBrowser(manifest, siteUrl));
+      productResults.push(await checkApi(manifest, siteUrl));
+      productResults.push(await checkDatabase(manifest, siteUrl));
+      productResults.push(checkBrowser(manifest, siteUrl));
     }
 
-    // Step 4: Build QA report
+    // Step 5: Gap analysis
+    const gapResult = analyzeGaps(manifest);
+    const categoryResult = analyzeExpectations(manifest);
+
+    // Step 6: Build unified report
+    const allResults = [...codeResults, ...productResults];
     const qaReport = buildReport(
       manifest.header.name || manifest.header.slug,
       manifest.header.version,
       allResults,
     );
-
-    // Step 5: Customer expectation analysis
-    const categoryResult = analyzeExpectations(manifest);
-
-    // Step 6: Build unified audit report
     const auditReport = buildAuditReport(gapResult, qaReport);
 
     // Step 7: Format output
     if (format === 'json') {
-      return this.successResult(JSON.stringify({ audit: auditReport, customerExpectations: categoryResult }, null, 2));
+      return this.successResult(JSON.stringify({ audit: auditReport, customerExpectations: categoryResult, codeQuality: codeResults }, null, 2));
     }
 
-    let output = formatAuditReport(auditReport);
+    let output = `FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
+
+    // Code quality summary
+    output += `CODE QUALITY (11 checks)\n${'-'.repeat(40)}\n`;
+    for (const r of codeResults) {
+      const errors = r.issues.filter(i => i.type === 'error').length;
+      const warnings = r.issues.filter(i => i.type === 'warning').length;
+      const infos = r.issues.filter(i => i.type === 'info').length;
+      const status = infos > 0 && errors === 0 && warnings === 0 ? 'SKIP' : errors === 0 ? 'PASS' : 'FAIL';
+      output += `  ${r.category.toUpperCase().padEnd(16)} ${status.padEnd(6)} ${errors} errors, ${warnings} warnings\n`;
+    }
+    const codeTotalErr = codeResults.reduce((s, r) => s + r.issues.filter(i => i.type === 'error').length, 0);
+    const codeTotalWarn = codeResults.reduce((s, r) => s + r.issues.filter(i => i.type === 'warning').length, 0);
+    output += `  ${'─'.repeat(40)}\n  CODE TOTAL: ${codeTotalErr} errors, ${codeTotalWarn} warnings\n\n`;
+
+    // Product quality summary
+    output += `PRODUCT QUALITY (${productResults.length} checks)\n${'-'.repeat(40)}\n`;
+    for (const r of productResults) {
+      const errors = r.issues.filter(i => i.type === 'error').length;
+      const warnings = r.issues.filter(i => i.type === 'warning').length;
+      output += `  ${r.category.toUpperCase().padEnd(16)} ${errors} errors, ${warnings} warnings\n`;
+    }
+    output += '\n';
+
+    // Audit report + category analysis
+    output += formatAuditReport(auditReport);
     output += '\n\n' + formatCategoryAnalysis(categoryResult);
+
     return this.successResult(output);
   }
 

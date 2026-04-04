@@ -15,13 +15,8 @@ export declare class WpPluginQaServer {
     private handleCheckUx;
     private handleCheckTemplates;
     private handleCheckA11y;
-    private handleEvaluateAdmin;
-    private handleEvaluateFrontend;
-    private handleEvaluateMarketing;
-    private handleAnalyzeGaps;
-    private handleCompetitiveAnalysis;
-    private handleGenerateReport;
-    private handleAutomatedQa;
+    private handleEvaluateProduct;
+    private handleAnalyzeMarket;
     private handleAuditPlugin;
     private handleSetupQuality;
     private handleRunCodeChecks;
