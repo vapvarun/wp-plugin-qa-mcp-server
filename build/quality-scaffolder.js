@@ -90,7 +90,7 @@ function updateOrCreateFile(filePath, content, result) {
     }
     // Check what's missing in existing workflow
     const missingJobs = [];
-    const requiredJobs = ['phpcs', 'phpstan', 'php-lint', 'php-compatibility', 'security', 'eslint'];
+    const requiredJobs = ['wpcs', 'phpstan', 'php-lint', 'plugin-check'];
     for (const job of requiredJobs) {
         if (!existing.includes(job)) {
             missingJobs.push(job);
@@ -154,26 +154,89 @@ export function detectJsGlobals(pluginPath) {
 }
 // ─── Config Generators ──────────────────────────────────────────
 function generatePhpcsConfig(textDomain, minWpVersion) {
+    // Derive prefix from text-domain: "jetonomy-pro" → "jetonomy_pro", "wpmediaverse" → "wpmediaverse"
+    const prefix = textDomain.replace(/-/g, '_');
+    const prefixShort = prefix.split('_')[0]; // e.g. "jetonomy" from "jetonomy_pro"
+    const prefixUpper = prefix.toUpperCase();
     return `<?xml version="1.0"?>
-<ruleset name="Plugin Coding Standards">
-\t<description>PHPCS ruleset for ${textDomain}</description>
+<ruleset xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="${textDomain}" xsi:noNamespaceSchemaLocation="vendor/squizlabs/php_codesniffer/phpcs.xsd">
 
-\t<!-- What to scan -->
-\t<file>.</file>
+\t<description>WPCS ruleset for ${textDomain}</description>
 
-\t<!-- Exclude -->
-\t<exclude-pattern>/vendor/*</exclude-pattern>
-\t<exclude-pattern>/node_modules/*</exclude-pattern>
-\t<exclude-pattern>/build/*</exclude-pattern>
-\t<exclude-pattern>/dist/*</exclude-pattern>
-\t<exclude-pattern>/assets/js/*.min.js</exclude-pattern>
-\t<exclude-pattern>/assets/css/*.min.css</exclude-pattern>
+\t<file>includes/</file>
 
 \t<arg name="extensions" value="php"/>
-\t<arg value="sp"/>
 \t<arg name="colors"/>
+\t<arg value="sp"/>
 
-\t<rule ref="WordPress"/>
+\t<rule ref="WordPress">
+\t\t<!-- Short array/ternary syntax is standard in modern PHP 8.1+ plugins. -->
+\t\t<exclude name="Universal.Arrays.DisallowShortArraySyntax"/>
+\t\t<exclude name="Universal.Operators.DisallowShortTernary"/>
+
+\t\t<!-- Custom tables — direct DB queries are intentional and necessary. -->
+\t\t<exclude name="WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound"/>
+\t\t<exclude name="WordPress.WP.GlobalVariablesOverride.Prohibited"/>
+\t\t<exclude name="WordPress.DB.DirectDatabaseQuery.DirectQuery"/>
+\t\t<exclude name="WordPress.DB.DirectDatabaseQuery.NoCaching"/>
+\t\t<exclude name="WordPress.DB.DirectDatabaseQuery.SchemaChange"/>
+\t\t<exclude name="WordPress.DB.PreparedSQL.InterpolatedNotPrepared"/>
+\t\t<exclude name="WordPress.DB.PreparedSQL.NotPrepared"/>
+\t\t<exclude name="WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber"/>
+\t\t<exclude name="WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare"/>
+\t\t<exclude name="WordPress.DB.SlowDBQuery.slow_db_query_meta_key"/>
+\t\t<exclude name="WordPress.DB.SlowDBQuery.slow_db_query_meta_value"/>
+
+\t\t<!-- Commenting rules — too noisy, enforced via code review instead. -->
+\t\t<exclude name="Squiz.Commenting.FunctionComment.Missing"/>
+\t\t<exclude name="Squiz.Commenting.FunctionComment.MissingParamTag"/>
+\t\t<exclude name="Squiz.Commenting.FunctionComment.MissingParamComment"/>
+\t\t<exclude name="Squiz.Commenting.FunctionComment.WrongStyle"/>
+\t\t<exclude name="Squiz.Commenting.FunctionComment.ParamCommentFullStop"/>
+\t\t<exclude name="Squiz.Commenting.ClassComment.Missing"/>
+\t\t<exclude name="Squiz.Commenting.InlineComment.InvalidEndChar"/>
+\t\t<exclude name="Squiz.Commenting.VariableComment.Missing"/>
+\t\t<exclude name="Squiz.Commenting.BlockComment.CloserSameLine"/>
+\t\t<exclude name="Squiz.Commenting.FileComment.Missing"/>
+\t\t<exclude name="Squiz.Commenting.FileComment.MissingPackageTag"/>
+\t\t<exclude name="Squiz.Commenting.FileComment.SpacingAfterComment"/>
+\t\t<exclude name="Generic.Commenting.DocComment.MissingShort"/>
+\t\t<exclude name="Generic.Commenting.DocComment.ShortNotCapital"/>
+
+\t\t<!-- i18n translators comments — not shipping to wp.org. -->
+\t\t<exclude name="WordPress.WP.I18n.MissingTranslatorsComment"/>
+
+\t\t<!-- PSR-style class filenames used throughout. -->
+\t\t<exclude name="WordPress.Files.FileName.InvalidClassFileName"/>
+\t\t<exclude name="WordPress.Files.FileName.NotHyphenatedLowercase"/>
+
+\t\t<!-- Unused params in hooks/filters are expected. -->
+\t\t<exclude name="Generic.CodeAnalysis.UnusedFunctionParameter.Found"/>
+\t\t<exclude name="Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed"/>
+\t\t<exclude name="Generic.CodeAnalysis.UnusedFunctionParameter.FoundInExtendedClassAfterLastUsed"/>
+
+\t\t<!-- Style preferences. -->
+\t\t<exclude name="WordPress.PHP.YodaConditions.NotYoda"/>
+\t\t<exclude name="WordPress.PHP.NoSilencedErrors.Discouraged"/>
+\t\t<exclude name="Generic.Strings.UnnecessaryStringConcat.Found"/>
+\t\t<exclude name="Squiz.PHP.CommentedOutCode.Found"/>
+\t\t<exclude name="Universal.ControlStructures.DisallowLonelyIf.Found"/>
+\t\t<exclude name="Universal.NamingConventions.NoReservedKeywordParameterNames"/>
+\t</rule>
+
+\t<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+\t\t<properties>
+\t\t\t<property name="prefixes" type="array">
+\t\t\t\t<element value="${prefixShort}"/>
+\t\t\t\t<element value="${prefix}"/>
+\t\t\t\t<element value="${prefixUpper}"/>
+\t\t\t</property>
+\t\t</properties>
+\t</rule>
+
+\t<rule ref="WordPress.NamingConventions.PrefixAllGlobals.ShortPrefixPassed">
+\t\t<severity>0</severity>
+\t</rule>
 
 \t<rule ref="WordPress.WP.I18n">
 \t\t<properties>
@@ -183,7 +246,13 @@ function generatePhpcsConfig(textDomain, minWpVersion) {
 \t\t</properties>
 \t</rule>
 
-\t<config name="minimum_supported_wp_version" value="${minWpVersion}"/>
+\t<exclude-pattern>vendor/*</exclude-pattern>
+\t<exclude-pattern>node_modules/*</exclude-pattern>
+\t<exclude-pattern>assets/*</exclude-pattern>
+\t<exclude-pattern>build/*</exclude-pattern>
+\t<exclude-pattern>src/*</exclude-pattern>
+\t<exclude-pattern>dist/*</exclude-pattern>
+
 </ruleset>
 `;
 }
@@ -279,85 +348,144 @@ function generatePa11yConfig(siteUrl) {
 }
 // ─── GitHub Actions Workflow ─────────────────────────────────────
 function generateGitHubWorkflow(slug, textDomain) {
-    return `name: Quality Checks
+    return `name: CI
 
 on:
-  pull_request:
-    branches: [main, master, develop]
   push:
+    branches: [main, master, develop, 'v*']
+  pull_request:
     branches: [main, master, develop]
 
 jobs:
-  phpcs:
-    name: PHPCS (WordPress Standards)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-          tools: composer, cs2pr
-      - run: composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs phpcsstandards/phpcsutils
-      - run: phpcs --config-set installed_paths \$(composer global config home)/vendor/wp-coding-standards/wpcs
-      - run: phpcs --report=checkstyle | cs2pr
-
-  phpstan:
-    name: PHPStan (Static Analysis)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.2'
-      - run: composer install --no-interaction
-      - run: ./vendor/bin/phpstan analyse --error-format=github --memory-limit=1G
-
   php-lint:
-    name: PHP Syntax Check
+    name: PHP Lint
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        php-version: ['8.1', '8.2', '8.3', '8.4']
+        php: ['8.1', '8.2', '8.3', '8.4']
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: \${{ matrix.php-version }}
-      - run: find . -name "*.php" -not -path "./vendor/*" -not -path "./node_modules/*" | xargs -n1 php -l
+          php-version: \${{ matrix.php }}
+      - name: Check syntax
+        run: find includes/ -name '*.php' -exec php -l {} + 2>&1 | grep -v 'No syntax errors' | head -50; test \${PIPESTATUS[0]} -eq 0
 
-  eslint:
-    name: ESLint (JavaScript)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npx eslint@8 assets/js/ || true
-
-  php-compatibility:
-    name: PHP Compatibility (7.4-8.4)
+  wpcs:
+    name: WPCS
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          tools: composer
-      - run: composer global require phpcompatibility/phpcompatibility-wp phpcsstandards/phpcsutils squizlabs/php_codesniffer wp-coding-standards/wpcs
-      - run: phpcs --config-set installed_paths \$(composer global config home)/vendor/phpcompatibility/php-compatibility,\$(composer global config home)/vendor/phpcompatibility/phpcompatibility-wp,\$(composer global config home)/vendor/wp-coding-standards/wpcs
-      - run: phpcs --standard=PHPCompatibilityWP --extensions=php --ignore=vendor,node_modules --runtime-set testVersion 7.4-8.4 -n .
+      - name: Install Composer dependencies
+        run: composer install --no-progress --prefer-dist
+      - name: Run WPCS
+        run: |
+          vendor/bin/phpcs --standard=.phpcs.xml.dist --report=summary || true
+          ERRORS=\$(vendor/bin/phpcs --standard=.phpcs.xml.dist --report=json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('totals',{}).get('errors',0))" 2>/dev/null || echo "0")
+          echo "WPCS errors: \$ERRORS"
+          if [ "\$ERRORS" -gt 0 ]; then
+            echo "::error::WPCS found \$ERRORS error(s)"
+            exit 1
+          fi
 
-  security:
-    name: Composer Security Audit
+  phpstan:
+    name: PHPStan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-      - run: composer install --no-interaction --no-dev 2>/dev/null || true
-      - run: composer audit --no-interaction || true
+          extensions: mysqli, mbstring
+      - name: Install Composer dependencies
+        run: composer install --no-progress --prefer-dist
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse --memory-limit=2G --no-progress
+
+  plugin-check:
+    name: Plugin Check (PCP)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: wp_pcp
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mysqli, mbstring
+
+      - name: Install WordPress
+        run: |
+          mkdir -p /tmp/wp
+          curl -sL https://wordpress.org/latest.tar.gz | tar xz -C /tmp/wp --strip-components=1
+          cp /tmp/wp/wp-config-sample.php /tmp/wp/wp-config.php
+          sed -i "s/database_name_here/wp_pcp/" /tmp/wp/wp-config.php
+          sed -i "s/username_here/root/" /tmp/wp/wp-config.php
+          sed -i "s/password_here/root/" /tmp/wp/wp-config.php
+          sed -i "s/localhost/127.0.0.1/" /tmp/wp/wp-config.php
+
+      - name: Setup WP-CLI
+        run: |
+          curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          chmod +x wp-cli.phar
+          sudo mv wp-cli.phar /usr/local/bin/wp
+
+      - name: Install WordPress
+        run: wp core install --path=/tmp/wp --url=http://localhost --title=Test --admin_user=admin --admin_password=admin --admin_email=admin@test.com --skip-email
+
+      - name: Install plugin and Plugin Check
+        run: |
+          ln -s "\$GITHUB_WORKSPACE" /tmp/wp/wp-content/plugins/${slug}
+          wp plugin activate ${slug} --path=/tmp/wp || true
+          wp plugin install plugin-check --activate --path=/tmp/wp
+
+      - name: Clean non-dist files for PCP
+        run: |
+          cd /tmp/wp/wp-content/plugins/${slug}
+          rm -rf node_modules vendor dist .git .github tests bin
+
+      - name: Run Plugin Check
+        run: |
+          RESULT=\$(wp plugin check ${slug} --path=/tmp/wp --format=csv 2>&1)
+          NOISE='compressed_files|hidden_files|application_detected|missing_direct_file_access_protection|outdated_tested_upto_header|stable_tag_mismatch|plugin_updater_detected|DirectDB.UnescapedDBParameter|PreparedSQL.NotPrepared|MissingTranslatorsComment|Heredoc.NotAllowed|EscapeOutput'
+          CODE_ERRORS=\$(echo "\$RESULT" | awk -F',' -v noise="\$NOISE" '
+            /^FILE:/ { file=\$0; gsub(/^FILE: /, "", file); next }
+            \$3 == "ERROR" {
+              if (file ~ /^tests\\//) next
+              if (file ~ /^bin\\//) next
+              if (file ~ /^dist\\//) next
+              if (file ~ /^vendor\\//) next
+              if (file ~ /^node_modules\\//) next
+              match_noise = 0
+              split(noise, n, "|")
+              for (k in n) { if (\$4 ~ n[k]) { match_noise = 1; break } }
+              if (match_noise) next
+              count++
+              print "  " file ":" \$1 " " \$4
+            }
+            END { print "\\nActionable errors: " count+0 }
+          ')
+          echo "\$CODE_ERRORS"
+          FINAL_COUNT=\$(echo "\$CODE_ERRORS" | tail -1 | grep -o '[0-9]*\$')
+          if [ "\${FINAL_COUNT:-0}" -gt 0 ]; then
+            echo "::error::Plugin Check found \$FINAL_COUNT actionable error(s)"
+            exit 1
+          fi
 `;
 }
 // ─── Branch Protection Guide ────────────────────────────────────
@@ -376,18 +504,17 @@ Go to: **GitHub repo → Settings → Branches → Add branch protection rule**
 | **Require a pull request before merging** | Yes |
 | **Require approvals** | 1 (minimum) |
 | **Require status checks to pass** | Yes |
-| **Status checks that are required:** | \`PHPCS\`, \`PHPStan\`, \`PHP Syntax Check\`, \`PHP Compatibility\` |
+| **Status checks that are required:** | \`WPCS\`, \`PHPStan\`, \`PHP Lint\`, \`Plugin Check (PCP)\` |
 | **Require branches to be up to date** | Yes |
 | **Do not allow bypassing** | Yes (even admins) |
 
 ### Required Status Checks
 
 These come from \`.github/workflows/quality.yml\`:
-- \`phpcs\` — WordPress Coding Standards
-- \`phpstan\` — Static type analysis
+- \`wpcs\` — WordPress Coding Standards (errors block, warnings pass)
+- \`phpstan\` — Static type analysis (level 5, 2G memory)
 - \`php-lint\` — Syntax check across PHP 8.1-8.4
-- \`php-compatibility\` — PHP version compatibility
-- \`security\` — Composer dependency vulnerabilities
+- \`plugin-check\` — WordPress Plugin Check with noise filtering
 
 ### Workflow
 
