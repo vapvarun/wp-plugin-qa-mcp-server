@@ -351,6 +351,82 @@ function scanRestRoutes(phpFiles: string[], contents: Map<string, string>, plugi
     }
   }
 
+  // Also detect REST controllers that extend WP_REST_Controller
+  const controllerPattern = /class\s+(\w+)\s+extends\s+WP_REST_Controller/g;
+  const namespacePattern = /(?:protected|private|public)?\s*(?:\$namespace|\$rest_base)\s*=\s*['"]([^'"]+)['"]/g;
+  const registerPattern = /register_rest_route\s*\(/g;
+
+  for (const file of phpFiles) {
+    const content = contents.get(file) || '';
+    const rel = relativePath(file, pluginPath);
+
+    // Skip if we already found routes via string literals in this file
+    if (routes.some(r => r.file === rel)) continue;
+
+    const hasController = controllerPattern.test(content);
+    controllerPattern.lastIndex = 0;
+
+    if (!hasController) continue;
+
+    // Find namespace and rest_base from class properties
+    let ns = '';
+    let base = '';
+    let nsMatch;
+    while ((nsMatch = namespacePattern.exec(content)) !== null) {
+      const before = content.substring(Math.max(0, nsMatch.index - 50), nsMatch.index);
+      if (/namespace/i.test(before)) ns = nsMatch[1];
+      if (/rest_base/i.test(before)) base = nsMatch[1];
+    }
+    namespacePattern.lastIndex = 0;
+
+    // Count register_rest_route calls
+    let routeCount = 0;
+    while (registerPattern.exec(content) !== null) routeCount++;
+    registerPattern.lastIndex = 0;
+
+    if (routeCount > 0 && (ns || base)) {
+      // Extract each register_rest_route block
+      const routeBlockPattern = /register_rest_route\s*\(\s*(?:\$this->namespace|\$[\w]+)\s*,\s*['"]([^'"]*)['"]\s*(?:\.\s*['"]([^'"]*)['"]\s*)?/g;
+      let rbMatch;
+      while ((rbMatch = routeBlockPattern.exec(content)) !== null) {
+        const routePath = (rbMatch[1] || '') + (rbMatch[2] || '');
+        const contextEnd = Math.min(rbMatch.index + 1500, content.length);
+        const context = content.substring(rbMatch.index, contextEnd);
+
+        const methods: string[] = [];
+        const methodMatch = context.match(/['"]methods['"]\s*=>\s*(?:['"](\w+)['"]|WP_REST_Server::(\w+))/);
+        if (methodMatch) {
+          methods.push((methodMatch[1] || methodMatch[2]).toUpperCase());
+        }
+
+        let permCallback = 'unknown';
+        if (context.includes('__return_true')) permCallback = '__return_true';
+        else if (/permission_callback/.test(context)) permCallback = 'closure';
+
+        routes.push({
+          namespace: ns || 'unknown',
+          route: routePath || base || 'unknown',
+          methods: methods.length > 0 ? methods : ['GET'],
+          permissionCallback: permCallback,
+          file: rel,
+          line: getLineNumber(content, rbMatch.index),
+        });
+      }
+
+      // If no individual routes found but we know it's a controller
+      if (!routes.some(r => r.file === rel) && routeCount > 0) {
+        routes.push({
+          namespace: ns || 'unknown',
+          route: '/' + (base || 'unknown'),
+          methods: ['GET'],
+          permissionCallback: 'unknown',
+          file: rel,
+          line: getLineNumber(content, 0),
+        });
+      }
+    }
+  }
+
   return routes;
 }
 
@@ -453,7 +529,10 @@ function scanAdminPages(phpFiles: string[], contents: Map<string, string>, plugi
     const rel = relativePath(file, pluginPath);
     let match;
 
-    while ((match = menuPattern.exec(content)) !== null) {
+    // Normalize i18n wrappers so regex can match string arguments
+    const normalized = content.replace(/(?:__|esc_html__|esc_attr__)\s*\(\s*(['"][^'"]*['"])\s*,\s*['"][^'"]*['"]\s*\)/g, '$1');
+
+    while ((match = menuPattern.exec(normalized)) !== null) {
       pages.push({
         slug: match[4],
         title: match[1],
@@ -464,7 +543,7 @@ function scanAdminPages(phpFiles: string[], contents: Map<string, string>, plugi
       });
     }
 
-    while ((match = submenuPattern.exec(content)) !== null) {
+    while ((match = submenuPattern.exec(normalized)) !== null) {
       pages.push({
         slug: match[5],
         title: match[2],
@@ -476,7 +555,7 @@ function scanAdminPages(phpFiles: string[], contents: Map<string, string>, plugi
       });
     }
 
-    while ((match = optionsPattern.exec(content)) !== null) {
+    while ((match = optionsPattern.exec(normalized)) !== null) {
       pages.push({
         slug: match[4],
         title: match[1],
@@ -660,10 +739,20 @@ function scanDbTables(phpFiles: string[], contents: Map<string, string>, pluginP
     let match;
 
     // Check CREATE TABLE statements
-    const createPattern = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`'"]*\{?\$?(?:wpdb->prefix|table_prefix)\}?[`'"]*(\w+)/gi;
+    const createPattern = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`'"]*\{?\$?(?:wpdb->prefix|table_prefix|prefix)\}?[`'"]*(\w+)/gi;
     while ((match = createPattern.exec(content)) !== null) {
       const suffix = match[1];
       if (!seen.has(suffix)) {
+        seen.add(suffix);
+        tables.push({ tableSuffix: suffix, file: rel, line: getLineNumber(content, match.index) });
+      }
+    }
+
+    // Also scan for table names in dbDelta schema strings (CREATE TABLE {$prefix}tablename)
+    const dbDeltaPattern = /CREATE\s+TABLE\s+\{?\$\w+\}?(\w+)\s*\(/gi;
+    while ((match = dbDeltaPattern.exec(content)) !== null) {
+      const suffix = match[1];
+      if (!seen.has(suffix) && !wpCoreTables.has(suffix)) {
         seen.add(suffix);
         tables.push({ tableSuffix: suffix, file: rel, line: getLineNumber(content, match.index) });
       }
@@ -794,6 +883,20 @@ function scanCustomRoles(phpFiles: string[], contents: Map<string, string>, plug
     while ((match = pattern.exec(content)) !== null) {
       roles.push({
         role: match[1],
+        displayName: match[2],
+        file: rel,
+        line: getLineNumber(content, match.index),
+      });
+    }
+
+    // Also detect add_role with class constants
+    const constRolePattern = /add_role\s*\(\s*(self|static)::\w+\s*,\s*(?:__\s*\(\s*)?['"]([^'"]+)['"]/g;
+    while ((match = constRolePattern.exec(content)) !== null) {
+      // Try to resolve the constant value
+      const constMatch = content.match(/const\s+\w+\s*=\s*['"]([^'"]+)['"]/);
+      const roleName = constMatch ? constMatch[1] : 'custom_role';
+      roles.push({
+        role: roleName,
         displayName: match[2],
         file: rel,
         line: getLineNumber(content, match.index),
