@@ -309,7 +309,9 @@ export type TestCategory =
   | 'bundle-size'
   | 'security-scan'
   | 'performance-scan'
-  | 'pcp-deep';
+  | 'pcp-deep'
+  | 'wiring'
+  | 'ux-guidelines';
 
 export interface TestItem {
   id: string;

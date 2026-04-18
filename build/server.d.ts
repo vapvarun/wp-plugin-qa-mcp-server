@@ -14,6 +14,8 @@ export declare class WpPluginQaServer {
     private handleCheckBrowser;
     private handleCheckUx;
     private handleCheckTemplates;
+    private handleCheckWiringCompleteness;
+    private handleCheckUxGuidelines;
     private handleCheckA11y;
     private handleEvaluateProduct;
     private handleAnalyzeMarket;
@@ -21,6 +23,7 @@ export declare class WpPluginQaServer {
     private handleProbeRoles;
     private handleCrossReferenceData;
     private handleBootstrapPlan;
+    private handleLearnFromBasecamp;
     private handleSetupQuality;
     private handleRunCodeChecks;
     private handleCheckCodeQuality;

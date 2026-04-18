@@ -273,7 +273,79 @@ export const tools = [
             required: ['plugin_path'],
         },
     },
-    // ─── 16. Full Audit (master tool) ─────────────────────────────
+    // ─── 16. Basecamp ledger (per-plugin bug history) ─────────────
+    {
+        name: 'wppqa_learn_from_basecamp',
+        description: 'Plugin-agnostic Basecamp ledger generator with a local per-card cache. Reads plan/basecamp.yml, consumes pre-fetched data (this tool does NOT talk to Basecamp), and writes plan/basecamp/ledger.md + ledger.json + cache/columns.json + cache/cards/{id}.json so future sessions carry full bug history — fix SHAs, reopen patterns, module hot-spots, regression-fixture coverage, title-similarity duplicate detection — without re-querying Basecamp for unchanged cards. Two-phase call — first invocation with compact listings (fetched_columns) returns needsFetch; orchestrator fetches those via basecamp-mcp (basecamp_get_card + basecamp_list_comments) and re-calls with fetched_full_cards + fetched_comments populated.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the plugin directory containing plan/basecamp.yml.',
+                },
+                fetched_columns: {
+                    type: 'object',
+                    description: 'Required. Compact listings keyed by column name (matches plan/basecamp.yml keys). Each value is an array of { id, title, updated_at, created_at?, app_url?, comments_count?, assignees? }. Obtain via basecamp_list_card_ids per column.',
+                },
+                fetched_full_cards: {
+                    type: 'object',
+                    description: 'Optional. Full card bodies keyed by card id, supplied only for ids the tool reported as needsFetch.cards on a previous call (or all ids on a first run). Each value is { id, title, created_at, updated_at, content, app_url, comments_count, creator }. Obtain via basecamp_get_card.',
+                },
+                fetched_comments: {
+                    type: 'object',
+                    description: 'Optional. Comments keyed by card id, supplied only for ids the tool reported as needsFetch.comments. Each value is an array of { content, created_at?, creator? }. Obtain via basecamp_list_comments.',
+                },
+                project_id: {
+                    type: 'string',
+                    description: 'Fallback project id used only when plan/basecamp.yml is missing.',
+                },
+                project_url: {
+                    type: 'string',
+                    description: 'Fallback project url used only when plan/basecamp.yml is missing.',
+                },
+                force_full: {
+                    type: 'boolean',
+                    description: 'If true, ignore the on-disk cache and regenerate from supplied data. Default false.',
+                },
+                write_ledger: {
+                    type: 'boolean',
+                    description: 'Write plan/basecamp/ledger.md + ledger.json + cache/* (default true).',
+                },
+            },
+            required: ['plugin_path', 'fetched_columns'],
+        },
+    },
+    // ─── 17. Systemic Misalignment Checks (from Learnomy v1.3.0 lessons) ──
+    {
+        name: 'wppqa_check_wiring_completeness',
+        description: 'Catches settings that save to the DB (admin form + handler + model + REST) but are never read by any student/frontend template. Class of bug proven by the Learnomy v1.3.0 sprint where 24 of 43 tracked settings were half-wired. Scans includes/admin/ for setting keys (name=, set_setting, $settings[...]) and templates/ for corresponding reads. Flags any setting discovered in admin that no template references.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
+    {
+        name: 'wppqa_check_ux_guidelines',
+        description: "Machine-enforces UX guidelines from the plugin's own docs/UX-GUIDELINES.md (or equivalent). Checks: CSS token compliance (no raw hex/px outside var(--prefix-*, fallback)), icon policy (no Dashicons, no emoji in views), human labels (no underscore-joined jargon), focus-visible (no outline:none without replacement), page header consistency (.prefix-page-header on editor/form views). Auto-detects CSS prefix from var(--xxx-*) usage.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
+    // ─── 20. Full Audit (master tool) ─────────────────────────────
     {
         name: 'wppqa_audit_plugin',
         description: 'Complete plugin audit — the ONE command that runs everything: scan features, run all 11 code quality checks, evaluate product (admin + frontend + marketing), check UX, check templates, check a11y, analyze market gaps, and generate graded report. Optional live site checks (API, DB, browser) if site_url provided. Output formats: markdown (default), json, sarif, junit.',

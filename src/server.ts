@@ -35,6 +35,8 @@ import type { RoleProfile } from './role-matrix-prober.js';
 import { crossReferenceData } from './data-cross-reference.js';
 import { bootstrapPlan } from './plan-bootstrap.js';
 import { learnFromBasecamp } from './basecamp-learner.js';
+import { checkWiringCompleteness } from './wiring-completeness-checker.js';
+import { checkUxGuidelines } from './ux-guidelines-checker.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -131,7 +133,13 @@ export class WpPluginQaServer {
           case 'wppqa_learn_from_basecamp':
             return await this.handleLearnFromBasecamp(toolArgs);
 
-          // 17. Full Audit (master tool)
+          // 17-18. Systemic Misalignment Checks (from Learnomy v1.3.0 lessons)
+          case 'wppqa_check_wiring_completeness':
+            return this.handleCheckWiringCompleteness(toolArgs.plugin_path as string);
+          case 'wppqa_check_ux_guidelines':
+            return this.handleCheckUxGuidelines(toolArgs.plugin_path as string);
+
+          // 19. Full Audit (master tool)
           case 'wppqa_audit_plugin':
             return await this.handleAuditPlugin(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined, toolArgs.format as string | undefined);
 
@@ -185,6 +193,18 @@ export class WpPluginQaServer {
   private handleCheckTemplates(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const result = checkTemplates(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckWiringCompleteness(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkWiringCompleteness(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckUxGuidelines(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkUxGuidelines(pluginPath);
     return this.formatCheckerResult(result);
   }
 

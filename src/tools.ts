@@ -355,7 +355,39 @@ export const tools: Tool[] = [
     },
   },
 
-  // ─── 17. Full Audit (master tool) ─────────────────────────────
+  // ─── 17. Systemic Misalignment Checks (from Learnomy v1.3.0 lessons) ──
+  {
+    name: 'wppqa_check_wiring_completeness',
+    description:
+      'Catches settings that save to the DB (admin form + handler + model + REST) but are never read by any student/frontend template. Class of bug proven by the Learnomy v1.3.0 sprint where 24 of 43 tracked settings were half-wired. Scans includes/admin/ for setting keys (name=, set_setting, $settings[...]) and templates/ for corresponding reads. Flags any setting discovered in admin that no template references.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'wppqa_check_ux_guidelines',
+    description:
+      "Machine-enforces UX guidelines from the plugin's own docs/UX-GUIDELINES.md (or equivalent). Checks: CSS token compliance (no raw hex/px outside var(--prefix-*, fallback)), icon policy (no Dashicons, no emoji in views), human labels (no underscore-joined jargon), focus-visible (no outline:none without replacement), page header consistency (.prefix-page-header on editor/form views). Auto-detects CSS prefix from var(--xxx-*) usage.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── 20. Full Audit (master tool) ─────────────────────────────
   {
     name: 'wppqa_audit_plugin',
     description:

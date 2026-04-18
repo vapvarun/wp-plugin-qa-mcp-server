@@ -27,6 +27,9 @@ import { runAllCodeChecks, runSingleCheck } from './code-quality-checker.js';
 import { probeRoleMatrix } from './role-matrix-prober.js';
 import { crossReferenceData } from './data-cross-reference.js';
 import { bootstrapPlan } from './plan-bootstrap.js';
+import { learnFromBasecamp } from './basecamp-learner.js';
+import { checkWiringCompleteness } from './wiring-completeness-checker.js';
+import { checkUxGuidelines } from './ux-guidelines-checker.js';
 import { resetIdCounter } from './shared-utils.js';
 export class WpPluginQaServer {
     server;
@@ -91,7 +94,15 @@ export class WpPluginQaServer {
                     // 15. Plan bootstrap
                     case 'wppqa_bootstrap_plan':
                         return await this.handleBootstrapPlan(toolArgs.plugin_path, toolArgs.overwrite);
-                    // 16. Full Audit (master tool)
+                    // 16. Basecamp ledger
+                    case 'wppqa_learn_from_basecamp':
+                        return await this.handleLearnFromBasecamp(toolArgs);
+                    // 17-18. Systemic Misalignment Checks (from Learnomy v1.3.0 lessons)
+                    case 'wppqa_check_wiring_completeness':
+                        return this.handleCheckWiringCompleteness(toolArgs.plugin_path);
+                    case 'wppqa_check_ux_guidelines':
+                        return this.handleCheckUxGuidelines(toolArgs.plugin_path);
+                    // 19. Full Audit (master tool)
                     case 'wppqa_audit_plugin':
                         return await this.handleAuditPlugin(toolArgs.plugin_path, toolArgs.site_url, toolArgs.format);
                     default:
@@ -148,6 +159,18 @@ export class WpPluginQaServer {
         if (!pluginPath)
             return this.errorResult('plugin_path is required');
         const result = checkTemplates(pluginPath);
+        return this.formatCheckerResult(result);
+    }
+    handleCheckWiringCompleteness(pluginPath) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkWiringCompleteness(pluginPath);
+        return this.formatCheckerResult(result);
+    }
+    handleCheckUxGuidelines(pluginPath) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkUxGuidelines(pluginPath);
         return this.formatCheckerResult(result);
     }
     handleCheckA11y(pluginPath) {
@@ -299,6 +322,32 @@ export class WpPluginQaServer {
             return this.errorResult('plugin_path is required');
         const report = await bootstrapPlan({ pluginPath, overwrite: overwrite === true });
         return this.successResult(JSON.stringify(report, null, 2));
+    }
+    async handleLearnFromBasecamp(args) {
+        const pluginPath = args.plugin_path;
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const fetchedColumns = args.fetched_columns;
+        if (!fetchedColumns || typeof fetchedColumns !== 'object' || Array.isArray(fetchedColumns)) {
+            return this.errorResult('fetched_columns is required (Record<column_name, CompactCard[]>). Call basecamp_list_card_ids per column first.');
+        }
+        try {
+            const result = await learnFromBasecamp({
+                pluginPath,
+                fetchedColumns,
+                fetchedFullCards: args.fetched_full_cards,
+                fetchedComments: args.fetched_comments,
+                projectId: typeof args.project_id === 'string' ? args.project_id : undefined,
+                projectUrl: typeof args.project_url === 'string' ? args.project_url : undefined,
+                forceFull: typeof args.force_full === 'boolean' ? args.force_full : undefined,
+                writeLedger: typeof args.write_ledger === 'boolean' ? args.write_ledger : undefined,
+            });
+            return this.successResult(JSON.stringify(result, null, 2));
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return this.errorResult(`wppqa_learn_from_basecamp: ${msg}`);
+        }
     }
     // ─── Code Quality Handlers ──────────────────────────────────
     handleSetupQuality(pluginPath, siteUrl) {
