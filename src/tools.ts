@@ -311,7 +311,7 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_learn_from_basecamp',
     description:
-      'Plugin-agnostic Basecamp ledger generator. Reads plan/basecamp.yml, walks every declared column (Triage / Bugs / Ready for Testing / Done / etc.) with comments, and writes plan/basecamp/ledger.md + ledger.json so future sessions carry full bug history — fix SHAs, reopen patterns, module hot-spots, regression-fixture coverage — without re-querying Basecamp.',
+      'Plugin-agnostic Basecamp ledger generator with a local per-card cache. Reads plan/basecamp.yml, consumes pre-fetched data (this tool does NOT talk to Basecamp), and writes plan/basecamp/ledger.md + ledger.json + cache/columns.json + cache/cards/{id}.json so future sessions carry full bug history — fix SHAs, reopen patterns, module hot-spots, regression-fixture coverage, title-similarity duplicate detection — without re-querying Basecamp for unchanged cards. Two-phase call — first invocation with compact listings (fetched_columns) returns needsFetch; orchestrator fetches those via basecamp-mcp (basecamp_get_card + basecamp_list_comments) and re-calls with fetched_full_cards + fetched_comments populated.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -319,28 +319,39 @@ export const tools: Tool[] = [
           type: 'string',
           description: 'Absolute path to the plugin directory containing plan/basecamp.yml.',
         },
-        account_id: {
-          type: 'string',
-          description: 'Basecamp account ID. Falls back to BASECAMP_ACCOUNT_ID env.',
+        fetched_columns: {
+          type: 'object',
+          description:
+            'Required. Compact listings keyed by column name (matches plan/basecamp.yml keys). Each value is an array of { id, title, updated_at, created_at?, app_url?, comments_count?, assignees? }. Obtain via basecamp_list_card_ids per column.',
         },
-        access_token: {
-          type: 'string',
-          description: 'Basecamp OAuth bearer token. Falls back to BASECAMP_ACCESS_TOKEN env.',
+        fetched_full_cards: {
+          type: 'object',
+          description:
+            'Optional. Full card bodies keyed by card id, supplied only for ids the tool reported as needsFetch.cards on a previous call (or all ids on a first run). Each value is { id, title, created_at, updated_at, content, app_url, comments_count, creator }. Obtain via basecamp_get_card.',
         },
-        max_cards_per_column: {
-          type: 'number',
-          description: 'Page cap per column (default 500).',
+        fetched_comments: {
+          type: 'object',
+          description:
+            'Optional. Comments keyed by card id, supplied only for ids the tool reported as needsFetch.comments. Each value is an array of { content, created_at?, creator? }. Obtain via basecamp_list_comments.',
+        },
+        project_id: {
+          type: 'string',
+          description: 'Fallback project id used only when plan/basecamp.yml is missing.',
+        },
+        project_url: {
+          type: 'string',
+          description: 'Fallback project url used only when plan/basecamp.yml is missing.',
+        },
+        force_full: {
+          type: 'boolean',
+          description: 'If true, ignore the on-disk cache and regenerate from supplied data. Default false.',
         },
         write_ledger: {
           type: 'boolean',
-          description: 'Write plan/basecamp/ledger.md + ledger.json (default true).',
-        },
-        include_comments: {
-          type: 'boolean',
-          description: 'Pull comments so fix SHAs can be extracted (default true).',
+          description: 'Write plan/basecamp/ledger.md + ledger.json + cache/* (default true).',
         },
       },
-      required: ['plugin_path'],
+      required: ['plugin_path', 'fetched_columns'],
     },
   },
 

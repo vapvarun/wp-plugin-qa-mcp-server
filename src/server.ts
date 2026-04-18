@@ -368,20 +368,30 @@ export class WpPluginQaServer {
   private async handleLearnFromBasecamp(args: Record<string, unknown>): Promise<CallToolResult> {
     const pluginPath = args.plugin_path as string | undefined;
     if (!pluginPath) return this.errorResult('plugin_path is required');
+    const fetchedColumns = args.fetched_columns as
+      | Record<string, import('./basecamp-learner.js').CompactCard[]>
+      | undefined;
+    if (!fetchedColumns || typeof fetchedColumns !== 'object' || Array.isArray(fetchedColumns)) {
+      return this.errorResult(
+        'fetched_columns is required (Record<column_name, CompactCard[]>). Call basecamp_list_card_ids per column first.',
+      );
+    }
     try {
-      const report = await learnFromBasecamp({
+      const result = await learnFromBasecamp({
         pluginPath,
-        accountId: args.account_id as string | undefined,
-        accessToken: args.access_token as string | undefined,
-        maxCardsPerColumn:
-          typeof args.max_cards_per_column === 'number'
-            ? (args.max_cards_per_column as number)
-            : undefined,
+        fetchedColumns,
+        fetchedFullCards: args.fetched_full_cards as
+          | Record<string, import('./basecamp-learner.js').FetchedCard>
+          | undefined,
+        fetchedComments: args.fetched_comments as
+          | Record<string, import('./basecamp-learner.js').FetchedComment[]>
+          | undefined,
+        projectId: typeof args.project_id === 'string' ? (args.project_id as string) : undefined,
+        projectUrl: typeof args.project_url === 'string' ? (args.project_url as string) : undefined,
+        forceFull: typeof args.force_full === 'boolean' ? (args.force_full as boolean) : undefined,
         writeLedger: typeof args.write_ledger === 'boolean' ? (args.write_ledger as boolean) : undefined,
-        includeComments:
-          typeof args.include_comments === 'boolean' ? (args.include_comments as boolean) : undefined,
       });
-      return this.successResult(JSON.stringify(report, null, 2));
+      return this.successResult(JSON.stringify(result, null, 2));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return this.errorResult(`wppqa_learn_from_basecamp: ${msg}`);
