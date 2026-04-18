@@ -307,7 +307,44 @@ export const tools: Tool[] = [
     },
   },
 
-  // ─── 16. Full Audit (master tool) ─────────────────────────────
+  // ─── 16. Basecamp ledger (per-plugin bug history) ─────────────
+  {
+    name: 'wppqa_learn_from_basecamp',
+    description:
+      'Plugin-agnostic Basecamp ledger generator. Reads plan/basecamp.yml, walks every declared column (Triage / Bugs / Ready for Testing / Done / etc.) with comments, and writes plan/basecamp/ledger.md + ledger.json so future sessions carry full bug history — fix SHAs, reopen patterns, module hot-spots, regression-fixture coverage — without re-querying Basecamp.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the plugin directory containing plan/basecamp.yml.',
+        },
+        account_id: {
+          type: 'string',
+          description: 'Basecamp account ID. Falls back to BASECAMP_ACCOUNT_ID env.',
+        },
+        access_token: {
+          type: 'string',
+          description: 'Basecamp OAuth bearer token. Falls back to BASECAMP_ACCESS_TOKEN env.',
+        },
+        max_cards_per_column: {
+          type: 'number',
+          description: 'Page cap per column (default 500).',
+        },
+        write_ledger: {
+          type: 'boolean',
+          description: 'Write plan/basecamp/ledger.md + ledger.json (default true).',
+        },
+        include_comments: {
+          type: 'boolean',
+          description: 'Pull comments so fix SHAs can be extracted (default true).',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── 17. Full Audit (master tool) ─────────────────────────────
   {
     name: 'wppqa_audit_plugin',
     description:

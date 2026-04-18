@@ -34,6 +34,7 @@ import { probeRoleMatrix } from './role-matrix-prober.js';
 import type { RoleProfile } from './role-matrix-prober.js';
 import { crossReferenceData } from './data-cross-reference.js';
 import { bootstrapPlan } from './plan-bootstrap.js';
+import { learnFromBasecamp } from './basecamp-learner.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -126,7 +127,11 @@ export class WpPluginQaServer {
               toolArgs.overwrite as boolean | undefined,
             );
 
-          // 16. Full Audit (master tool)
+          // 16. Basecamp ledger
+          case 'wppqa_learn_from_basecamp':
+            return await this.handleLearnFromBasecamp(toolArgs);
+
+          // 17. Full Audit (master tool)
           case 'wppqa_audit_plugin':
             return await this.handleAuditPlugin(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined, toolArgs.format as string | undefined);
 
@@ -358,6 +363,29 @@ export class WpPluginQaServer {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const report = await bootstrapPlan({ pluginPath, overwrite: overwrite === true });
     return this.successResult(JSON.stringify(report, null, 2));
+  }
+
+  private async handleLearnFromBasecamp(args: Record<string, unknown>): Promise<CallToolResult> {
+    const pluginPath = args.plugin_path as string | undefined;
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    try {
+      const report = await learnFromBasecamp({
+        pluginPath,
+        accountId: args.account_id as string | undefined,
+        accessToken: args.access_token as string | undefined,
+        maxCardsPerColumn:
+          typeof args.max_cards_per_column === 'number'
+            ? (args.max_cards_per_column as number)
+            : undefined,
+        writeLedger: typeof args.write_ledger === 'boolean' ? (args.write_ledger as boolean) : undefined,
+        includeComments:
+          typeof args.include_comments === 'boolean' ? (args.include_comments as boolean) : undefined,
+      });
+      return this.successResult(JSON.stringify(report, null, 2));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return this.errorResult(`wppqa_learn_from_basecamp: ${msg}`);
+    }
   }
 
   // ─── Code Quality Handlers ──────────────────────────────────
