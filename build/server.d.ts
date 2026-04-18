@@ -18,6 +18,9 @@ export declare class WpPluginQaServer {
     private handleEvaluateProduct;
     private handleAnalyzeMarket;
     private handleAuditPlugin;
+    private handleProbeRoles;
+    private handleCrossReferenceData;
+    private handleBootstrapPlan;
     private handleSetupQuality;
     private handleRunCodeChecks;
     private handleCheckCodeQuality;

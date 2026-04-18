@@ -215,7 +215,65 @@ export const tools = [
             required: ['plugin_path'],
         },
     },
-    // ─── 13. Full Audit (master tool) ─────────────────────────────
+    // ─── 13. Role-matrix REST/AJAX prober ─────────────────────────
+    {
+        name: 'wppqa_probe_roles',
+        description: "Probe every discovered REST endpoint and AJAX action as each WordPress role (guest/subscriber/advertiser/admin by default) and report where observed HTTP status diverges from what the route's permission_callback says should happen. Catches capability/role mismatches — e.g. advertiser-portal routes accidentally gated with manage_options that would 403 in production — before release.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+                site_url: {
+                    type: 'string',
+                    description: 'Base URL of the running WP site (e.g. http://wp-ads.local)',
+                },
+                roles: {
+                    type: 'array',
+                    description: 'Optional role profiles to probe. If omitted, uses the default set (guest, subscriber, advertiser, admin) assuming the wbam_dev_as dev-auto-login mu-plugin is installed.',
+                    items: { type: 'object' },
+                },
+            },
+            required: ['plugin_path', 'site_url'],
+        },
+    },
+    // ─── 14. Write↔Read data cross-reference ──────────────────────
+    {
+        name: 'wppqa_cross_reference_data',
+        description: 'Catalog every data store the plugin touches (post_meta, user_meta, term_meta, option, transient, custom DB tables/columns) and cross-reference writers against readers. Catches stale-read bugs where a template reads a key nothing ever writes to — the exact pattern that produces "UI always shows 0" regressions — plus stale-write keys (wasted I/O) and orphaned stores.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
+    // ─── 15. Plan bootstrap (auto-scaffold plan/) ─────────────────
+    {
+        name: 'wppqa_bootstrap_plan',
+        description: 'Auto-generate the full plan/ folder for a plugin that does not have one yet, derived from the live manifest so every shortcode / REST route / admin page gets a flow stub and appears in coverage.md. Skips existing files unless overwrite is set, and returns a report of created + skipped paths plus a human next-steps checklist.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+                overwrite: {
+                    type: 'boolean',
+                    description: 'If true, regenerate every file (destructive — hand edits are lost). Default false.',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
+    // ─── 16. Full Audit (master tool) ─────────────────────────────
     {
         name: 'wppqa_audit_plugin',
         description: 'Complete plugin audit — the ONE command that runs everything: scan features, run all 11 code quality checks, evaluate product (admin + frontend + marketing), check UX, check templates, check a11y, analyze market gaps, and generate graded report. Optional live site checks (API, DB, browser) if site_url provided. Output formats: markdown (default), json, sarif, junit.',

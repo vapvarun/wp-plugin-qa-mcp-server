@@ -24,6 +24,9 @@ import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
 import { analyzeExpectations, formatCategoryAnalysis } from './category-expectations.js';
 import { scaffoldQualityConfigs } from './quality-scaffolder.js';
 import { runAllCodeChecks, runSingleCheck } from './code-quality-checker.js';
+import { probeRoleMatrix } from './role-matrix-prober.js';
+import { crossReferenceData } from './data-cross-reference.js';
+import { bootstrapPlan } from './plan-bootstrap.js';
 import { resetIdCounter } from './shared-utils.js';
 export class WpPluginQaServer {
     server;
@@ -79,7 +82,16 @@ export class WpPluginQaServer {
                     // 12. Market Analysis (merged gaps + competitive)
                     case 'wppqa_analyze_market':
                         return await this.handleAnalyzeMarket(toolArgs.plugin_path, toolArgs.search_keywords);
-                    // 13. Full Audit (master tool)
+                    // 13. Role-matrix prober
+                    case 'wppqa_probe_roles':
+                        return await this.handleProbeRoles(toolArgs.plugin_path, toolArgs.site_url, toolArgs.roles);
+                    // 14. Write↔Read data cross-reference
+                    case 'wppqa_cross_reference_data':
+                        return this.handleCrossReferenceData(toolArgs.plugin_path);
+                    // 15. Plan bootstrap
+                    case 'wppqa_bootstrap_plan':
+                        return await this.handleBootstrapPlan(toolArgs.plugin_path, toolArgs.overwrite);
+                    // 16. Full Audit (master tool)
                     case 'wppqa_audit_plugin':
                         return await this.handleAuditPlugin(toolArgs.plugin_path, toolArgs.site_url, toolArgs.format);
                     default:
@@ -266,6 +278,27 @@ export class WpPluginQaServer {
         output += formatAuditReport(auditReport);
         output += '\n\n' + formatCategoryAnalysis(categoryResult);
         return this.successResult(output);
+    }
+    // ─── Role / Data / Plan Handlers ────────────────────────────
+    async handleProbeRoles(pluginPath, siteUrl, roles) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        if (!siteUrl)
+            return this.errorResult('site_url is required');
+        const report = await probeRoleMatrix({ pluginPath, siteUrl, roles });
+        return this.successResult(JSON.stringify(report, null, 2));
+    }
+    handleCrossReferenceData(pluginPath) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const report = crossReferenceData({ pluginPath });
+        return this.successResult(JSON.stringify(report, null, 2));
+    }
+    async handleBootstrapPlan(pluginPath, overwrite) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const report = await bootstrapPlan({ pluginPath, overwrite: overwrite === true });
+        return this.successResult(JSON.stringify(report, null, 2));
     }
     // ─── Code Quality Handlers ──────────────────────────────────
     handleSetupQuality(pluginPath, siteUrl) {

@@ -7,8 +7,8 @@
  * Parses JSON output from tools and converts to CheckerIssue[].
  */
 import { execFileSync } from 'child_process';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { existsSync, statSync } from 'fs';
+import { join, basename } from 'path';
 import { findPhpFiles, findJsFiles, findFilesByExt, safeReadFile, relativePath, generateTestId } from './shared-utils.js';
 // ─── Main Runner ────────────────────────────────────────────────
 export function runAllCodeChecks(pluginPath) {
@@ -600,7 +600,7 @@ export function runBundleSize(pluginPath) {
     const startTime = Date.now();
     const category = 'bundle-size';
     const issues = [];
-    const { statSync: fStatSync } = require('fs');
+    const fStatSync = statSync;
     const jsFiles = findFilesByExt(pluginPath, '.js').filter(f => !f.includes('node_modules') && !f.includes('vendor'));
     const cssFiles = findFilesByExt(pluginPath, '.css').filter(f => !f.includes('node_modules') && !f.includes('vendor'));
     let totalJs = 0, totalCss = 0;
@@ -887,7 +887,7 @@ export function runPcpDeep(pluginPath) {
         }
     }
     // 4. Prefixing — functions and classes should use plugin prefix
-    const slug = require('path').basename(pluginPath).replace(/-/g, '_');
+    const slug = basename(pluginPath).replace(/-/g, '_');
     const prefixPattern = new RegExp(`^(?:function|class)\\s+(${slug}|wbam|wbcom|bp_|bb_)`, 'i');
     let unprefixedCount = 0;
     const unprefixedSamples = [];
