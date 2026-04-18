@@ -359,11 +359,11 @@ function checkIconPolicy(
         type: 'error',
         title: 'Dashicon detected in view',
         message:
-          'Design spec mandates Lucide SVG icons. Dashicons are visual debt — replace with a Lucide SVG inline.',
+          'Design spec mandates Lucide icons. Dashicons are visual debt — use `<i data-lucide="icon-name">` (if the Lucide runtime is enqueued) or an inline Lucide SVG.',
         file: rel,
         line: getLineNumber(content, match.index ?? 0),
         code: 'icon-dashicons',
-        fix: 'Replace with Lucide SVG. See lucide.dev for the icon catalog.',
+        fix: 'Replace with `<i data-lucide="NAME" aria-hidden="true"></i>` — do NOT hardcode the SVG markup when the plugin already registers the Lucide runtime. See lucide.dev for the icon catalog.',
       });
     }
 
