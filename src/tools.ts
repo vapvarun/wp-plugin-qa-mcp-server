@@ -387,6 +387,23 @@ export const tools: Tool[] = [
     },
   },
 
+  // ─── 19. Plugin-Dev Skill Rules (admin-ux-rulebook + security + lifecycle) ──
+  {
+    name: 'wppqa_check_plugin_dev_rules',
+    description:
+      "Enforces rules from the wp-plugin-development Claude skill (~/.claude/skills/wp-plugin-development/references/). Checks: Rule 10 ban on alert()/confirm(); security rules (no iteration over $_POST/$_GET, nonces paired with current_user_can); lifecycle rules (activation hooks top-level, uninstall.php guards WP_UNINSTALL_PLUGIN); Rule 7 (no raw -1 in number inputs); inline onclick ban; 3-breakpoint discipline; 40px tap targets. The skill is widely used in WBcom plugins but its rules are never machine-enforced — this tool closes that gap.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
   // ─── 20. Full Audit (master tool) ─────────────────────────────
   {
     name: 'wppqa_audit_plugin',

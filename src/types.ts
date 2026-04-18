@@ -311,7 +311,8 @@ export type TestCategory =
   | 'performance-scan'
   | 'pcp-deep'
   | 'wiring'
-  | 'ux-guidelines';
+  | 'ux-guidelines'
+  | 'plugin-dev-rules';
 
 export interface TestItem {
   id: string;

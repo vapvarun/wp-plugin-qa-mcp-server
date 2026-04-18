@@ -37,6 +37,7 @@ import { bootstrapPlan } from './plan-bootstrap.js';
 import { learnFromBasecamp } from './basecamp-learner.js';
 import { checkWiringCompleteness } from './wiring-completeness-checker.js';
 import { checkUxGuidelines } from './ux-guidelines-checker.js';
+import { checkPluginDevRules } from './plugin-dev-rules-checker.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -138,8 +139,10 @@ export class WpPluginQaServer {
             return this.handleCheckWiringCompleteness(toolArgs.plugin_path as string);
           case 'wppqa_check_ux_guidelines':
             return this.handleCheckUxGuidelines(toolArgs.plugin_path as string);
+          case 'wppqa_check_plugin_dev_rules':
+            return this.handleCheckPluginDevRules(toolArgs.plugin_path as string);
 
-          // 19. Full Audit (master tool)
+          // 20. Full Audit (master tool)
           case 'wppqa_audit_plugin':
             return await this.handleAuditPlugin(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined, toolArgs.format as string | undefined);
 
@@ -205,6 +208,12 @@ export class WpPluginQaServer {
   private handleCheckUxGuidelines(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const result = checkUxGuidelines(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckPluginDevRules(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkPluginDevRules(pluginPath);
     return this.formatCheckerResult(result);
   }
 
