@@ -242,7 +242,7 @@ export interface PluginManifest {
         totalLines: number;
     };
 }
-export type TestCategory = 'smoke' | 'functionality' | 'api' | 'database' | 'browser' | 'ux' | 'templates' | 'a11y' | 'admin-eval' | 'frontend-eval' | 'marketing' | 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep' | 'php-lint' | 'composer-audit' | 'i18n' | 'plugin-check' | 'bundle-size' | 'security-scan' | 'performance-scan' | 'pcp-deep' | 'wiring' | 'ux-guidelines' | 'plugin-dev-rules';
+export type TestCategory = 'smoke' | 'functionality' | 'api' | 'database' | 'browser' | 'ux' | 'templates' | 'a11y' | 'admin-eval' | 'frontend-eval' | 'marketing' | 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep' | 'php-lint' | 'composer-audit' | 'i18n' | 'plugin-check' | 'bundle-size' | 'security-scan' | 'performance-scan' | 'pcp-deep' | 'wiring' | 'ux-guidelines' | 'plugin-dev-rules' | 'visual-regression' | 'enum-consistency' | 'rest-js-contract' | 'editor-layout-bias';
 export interface TestItem {
     id: string;
     category: TestCategory;

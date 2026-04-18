@@ -1,0 +1,100 @@
+name: Plugin QA (wp-plugin-qa)
+
+# Drop this workflow into .github/workflows/wppqa.yml of any WBcom plugin.
+# It runs the systemic-misalignment checkers from wp-plugin-qa-mcp-server:
+#   - wiring completeness        (settings saved but never read by a template)
+#   - UX guidelines              (token/icon/label/focus/page-header rules)
+#   - plugin-dev rules           (alert/confirm ban, nonce+cap pairing, etc.)
+#
+# The visual-regression check needs a live WP site, so it is not wired in here.
+# Run it locally against Learnomy / a Local-by-Flywheel site (see ci-templates/README.md).
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  wppqa:
+    name: wp-plugin-qa systemic checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Clone wp-plugin-qa MCP server
+        run: |
+          git clone --depth=1 https://github.com/vapvarun/wp-plugin-qa-mcp-server.git /tmp/wppqa
+          cd /tmp/wppqa
+          npm ci --no-audit --no-fund
+          npm run build
+
+      # Each checker is invoked directly via node. We don't need the MCP stdio
+      # transport here — the checkers export plain functions that return a
+      # CheckerResult, so we call them straight and exit non-zero on errors.
+
+      - name: Wiring completeness check
+        run: |
+          node -e "
+          import('/tmp/wppqa/build/wiring-completeness-checker.js').then(({ checkWiringCompleteness }) => {
+            const r = checkWiringCompleteness(process.cwd());
+            const errs = r.issues.filter(i => i.type === 'error').length;
+            const warns = r.issues.filter(i => i.type === 'warning').length;
+            console.log('wiring: ' + errs + ' errors, ' + warns + ' warnings');
+            for (const i of r.issues.slice(0, 40)) {
+              console.log('  [' + i.type + '] ' + i.file + ':' + i.line + ' — ' + i.title);
+            }
+            require('fs').writeFileSync('wiring.json', JSON.stringify(r, null, 2));
+            process.exit(errs > 0 ? 1 : 0);
+          });
+          "
+
+      - name: UX guidelines check
+        run: |
+          node -e "
+          import('/tmp/wppqa/build/ux-guidelines-checker.js').then(({ checkUxGuidelines }) => {
+            const r = checkUxGuidelines(process.cwd());
+            const errs = r.issues.filter(i => i.type === 'error').length;
+            const warns = r.issues.filter(i => i.type === 'warning').length;
+            console.log('ux-guidelines: ' + errs + ' errors, ' + warns + ' warnings');
+            for (const i of r.issues.slice(0, 40)) {
+              console.log('  [' + i.type + '] ' + i.file + ':' + i.line + ' — ' + i.title);
+            }
+            require('fs').writeFileSync('ux.json', JSON.stringify(r, null, 2));
+            // Warnings do NOT fail the build; errors do.
+            process.exit(errs > 0 ? 1 : 0);
+          });
+          "
+
+      - name: Plugin-dev rules check
+        run: |
+          node -e "
+          import('/tmp/wppqa/build/plugin-dev-rules-checker.js').then(({ checkPluginDevRules }) => {
+            const r = checkPluginDevRules(process.cwd());
+            const errs = r.issues.filter(i => i.type === 'error').length;
+            const warns = r.issues.filter(i => i.type === 'warning').length;
+            console.log('plugin-dev-rules: ' + errs + ' errors, ' + warns + ' warnings');
+            for (const i of r.issues.slice(0, 40)) {
+              console.log('  [' + i.type + '] ' + i.file + ':' + i.line + ' — ' + i.title);
+            }
+            require('fs').writeFileSync('plugin-dev.json', JSON.stringify(r, null, 2));
+            process.exit(errs > 0 ? 1 : 0);
+          });
+          "
+
+      - name: Upload JSON reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wppqa-reports
+          path: |
+            wiring.json
+            ux.json
+            plugin-dev.json
+          if-no-files-found: ignore
+          retention-days: 14

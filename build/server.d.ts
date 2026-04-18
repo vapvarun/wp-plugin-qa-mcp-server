@@ -17,6 +17,10 @@ export declare class WpPluginQaServer {
     private handleCheckWiringCompleteness;
     private handleCheckUxGuidelines;
     private handleCheckPluginDevRules;
+    private handleCheckVisualRegression;
+    private handleCheckEnumConsistency;
+    private handleCheckRestJsContract;
+    private handleCheckEditorLayoutBias;
     private handleCheckA11y;
     private handleEvaluateProduct;
     private handleAnalyzeMarket;

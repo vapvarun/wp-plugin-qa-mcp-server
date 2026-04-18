@@ -312,7 +312,11 @@ export type TestCategory =
   | 'pcp-deep'
   | 'wiring'
   | 'ux-guidelines'
-  | 'plugin-dev-rules';
+  | 'plugin-dev-rules'
+  | 'visual-regression'
+  | 'enum-consistency'
+  | 'rest-js-contract'
+  | 'editor-layout-bias';
 
 export interface TestItem {
   id: string;

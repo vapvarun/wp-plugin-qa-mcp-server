@@ -38,6 +38,10 @@ import { learnFromBasecamp } from './basecamp-learner.js';
 import { checkWiringCompleteness } from './wiring-completeness-checker.js';
 import { checkUxGuidelines } from './ux-guidelines-checker.js';
 import { checkPluginDevRules } from './plugin-dev-rules-checker.js';
+import { checkVisualRegression } from './visual-regression-checker.js';
+import { checkEnumConsistency } from './enum-consistency-checker.js';
+import { checkRestJsContract } from './rest-js-contract-checker.js';
+import { checkEditorLayoutBias } from './editor-layout-bias-checker.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -141,6 +145,19 @@ export class WpPluginQaServer {
             return this.handleCheckUxGuidelines(toolArgs.plugin_path as string);
           case 'wppqa_check_plugin_dev_rules':
             return this.handleCheckPluginDevRules(toolArgs.plugin_path as string);
+          case 'wppqa_check_visual_regression':
+            return this.handleCheckVisualRegression(
+              toolArgs.plugin_path as string,
+              toolArgs.site_url as string | undefined,
+              toolArgs.autologin_param as string | undefined,
+              toolArgs.admin_urls as string[] | undefined,
+            );
+          case 'wppqa_check_enum_consistency':
+            return this.handleCheckEnumConsistency(toolArgs.plugin_path as string);
+          case 'wppqa_check_rest_js_contract':
+            return this.handleCheckRestJsContract(toolArgs.plugin_path as string);
+          case 'wppqa_check_editor_layout_bias':
+            return this.handleCheckEditorLayoutBias(toolArgs.plugin_path as string);
 
           // 20. Full Audit (master tool)
           case 'wppqa_audit_plugin':
@@ -214,6 +231,40 @@ export class WpPluginQaServer {
   private handleCheckPluginDevRules(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const result = checkPluginDevRules(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckVisualRegression(
+    pluginPath: string,
+    siteUrl?: string,
+    autologinParam?: string,
+    adminUrls?: string[],
+  ): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkVisualRegression({
+      pluginPath,
+      siteUrl,
+      autologinParam,
+      adminUrls,
+    });
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckEnumConsistency(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkEnumConsistency(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckRestJsContract(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkRestJsContract(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckEditorLayoutBias(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkEditorLayoutBias(pluginPath);
     return this.formatCheckerResult(result);
   }
 

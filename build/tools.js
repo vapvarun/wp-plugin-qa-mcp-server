@@ -360,6 +360,79 @@ export const tools = [
             required: ['plugin_path'],
         },
     },
+    // ─── 19b. Visual-regression check (live site — Playwright) ──────
+    {
+        name: 'wppqa_check_visual_regression',
+        description: "Playwright screenshots every admin edit screen and verifies each uses the plugin's design-system wrappers (.{prefix}-admin-card, .{prefix}-page-header) and NOT the legacy WP <table class=\"form-table\"> pattern. Catches the visual-regression class proven by Learnomy v1.3.0 — Quiz + Question editors shipped with grep-clean markup but rendered as 2015 WP settings pages. The CSS prefix is auto-detected from --{prefix}-* usage (same logic as wppqa_check_ux_guidelines). Admin URLs are auto-discovered from add_submenu_page / add_menu_page, or supplied via admin_urls. Requires a running WP site with a ?autologin=1 mu-plugin. Degrades gracefully (skipped + info) when site_url is missing or Playwright is not installed.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+                site_url: {
+                    type: 'string',
+                    description: 'Base URL of the running WP site (e.g. http://lms.local). Required for actual probes.',
+                },
+                autologin_param: {
+                    type: 'string',
+                    description: 'Query string used to trigger the dev-auto-login mu-plugin. Defaults to "?autologin=1".',
+                },
+                admin_urls: {
+                    type: 'array',
+                    description: 'Optional explicit list of admin edit URLs to probe. If omitted, URLs are discovered via add_submenu_page / add_menu_page scans.',
+                    items: { type: 'string' },
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
+    // ─── 19c. Enum consistency (admin/REST/service dialect drift) ────
+    {
+        name: 'wppqa_check_enum_consistency',
+        description: "Catches the 'enum drift' bug class: the same logical value (grading_method, feedback_timing, content_type, question type) is hardcoded as a list in admin / REST / service / DB but those lists disagree — e.g. admin allows 'last' while the service reads 'latest', or REST whitelist has 5 values and the service implements only 2. Scans every PHP file for three patterns (in_array( $var, [...], true ), 'enum' => [...], switch ($var) { case... }), groups observations by the LHS variable + nearest column/setting context (walks up 20 lines for ->column_name or ['key_name']), and flags any group where 2+ files disagree on the set. Static-only — no live DB required.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
+    // ─── 19d. REST ↔ JS contract drift ──────────────────────────────
+    {
+        name: 'wppqa_check_rest_js_contract',
+        description: "Catches the 'envelope mismatch' silent-bug class proven by Learnomy's catalog-view.js — JS reads data.courses but Base_Controller now returns {data, meta.cursor_next}. Both isolated tests pass; live integration silently breaks. Static-only — no live HTTP: extracts every register_rest_route + its callback's response-shape keys (rest_ensure_response literals + return arrays), then scans assets/js/ and src/ for property accesses within 50 lines of a route URL reference. Flags any access whose property isn't in the PHP shape (wrapper keys like data/error/message/code are suppressed). Severity high — this class of bug causes UI-wide blank states.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
+    // ─── 19e. Editor layout bias (sidebar-heavy vs content-empty) ───
+    {
+        name: 'wppqa_check_editor_layout_bias',
+        description: "Catches 'Gutenberg-narrative layout but the plugin is metadata-heavy' editors — Learnomy's pre-Wave-A3 lesson-editor.php crammed 6 cards into a 280px sidebar while the main area had only Title + empty Content. Scans includes/admin/views/*editor.php|*form.php; identifies sidebar regions (class=*sidebar*, <aside>, role=complementary) vs main regions (class=*main*/*content*, <main>) and counts cards (.{prefix}-admin-card, .{prefix}-card, .{prefix}-settings-section, postbox/meta-box) + inputs (input/select/textarea excl. hidden + nonces). Flags: sidebar ≥4 cards AND main <3 inputs, OR sidebar input count >2x main. Severity medium.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
     // ─── 20. Full Audit (master tool) ─────────────────────────────
     {
         name: 'wppqa_audit_plugin',

@@ -31,6 +31,10 @@ import { learnFromBasecamp } from './basecamp-learner.js';
 import { checkWiringCompleteness } from './wiring-completeness-checker.js';
 import { checkUxGuidelines } from './ux-guidelines-checker.js';
 import { checkPluginDevRules } from './plugin-dev-rules-checker.js';
+import { checkVisualRegression } from './visual-regression-checker.js';
+import { checkEnumConsistency } from './enum-consistency-checker.js';
+import { checkRestJsContract } from './rest-js-contract-checker.js';
+import { checkEditorLayoutBias } from './editor-layout-bias-checker.js';
 import { resetIdCounter } from './shared-utils.js';
 export class WpPluginQaServer {
     server;
@@ -105,6 +109,14 @@ export class WpPluginQaServer {
                         return this.handleCheckUxGuidelines(toolArgs.plugin_path);
                     case 'wppqa_check_plugin_dev_rules':
                         return this.handleCheckPluginDevRules(toolArgs.plugin_path);
+                    case 'wppqa_check_visual_regression':
+                        return this.handleCheckVisualRegression(toolArgs.plugin_path, toolArgs.site_url, toolArgs.autologin_param, toolArgs.admin_urls);
+                    case 'wppqa_check_enum_consistency':
+                        return this.handleCheckEnumConsistency(toolArgs.plugin_path);
+                    case 'wppqa_check_rest_js_contract':
+                        return this.handleCheckRestJsContract(toolArgs.plugin_path);
+                    case 'wppqa_check_editor_layout_bias':
+                        return this.handleCheckEditorLayoutBias(toolArgs.plugin_path);
                     // 20. Full Audit (master tool)
                     case 'wppqa_audit_plugin':
                         return await this.handleAuditPlugin(toolArgs.plugin_path, toolArgs.site_url, toolArgs.format);
@@ -180,6 +192,35 @@ export class WpPluginQaServer {
         if (!pluginPath)
             return this.errorResult('plugin_path is required');
         const result = checkPluginDevRules(pluginPath);
+        return this.formatCheckerResult(result);
+    }
+    handleCheckVisualRegression(pluginPath, siteUrl, autologinParam, adminUrls) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkVisualRegression({
+            pluginPath,
+            siteUrl,
+            autologinParam,
+            adminUrls,
+        });
+        return this.formatCheckerResult(result);
+    }
+    handleCheckEnumConsistency(pluginPath) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkEnumConsistency(pluginPath);
+        return this.formatCheckerResult(result);
+    }
+    handleCheckRestJsContract(pluginPath) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkRestJsContract(pluginPath);
+        return this.formatCheckerResult(result);
+    }
+    handleCheckEditorLayoutBias(pluginPath) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkEditorLayoutBias(pluginPath);
         return this.formatCheckerResult(result);
     }
     handleCheckA11y(pluginPath) {
