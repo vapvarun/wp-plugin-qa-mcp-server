@@ -20,39 +20,83 @@ An MCP (Model Context Protocol) server that provides comprehensive quality assur
 | **Performance** | DB query estimation, asset loading, autoload options, N+1 patterns, caching usage, script placement |
 | **Competitive Analysis** | Market research across WordPress.org, CodeCanyon, and Google — feature comparison, gap analysis, roadmap |
 
-## 16 Tools
+## 17 Tools
 
-### Phase 1: Scan & Plan
+### Discovery
 | Tool | Description |
 |------|-------------|
-| `wppqa_scan_plugin` | Scan a plugin directory and return a structured PluginManifest |
-| `wppqa_generate_plan` | Generate a prioritized test plan from a manifest |
-| `wppqa_run_full_scan` | Scan + generate test plan in one call |
+| `wppqa_scan_plugin` | Scan a plugin directory and return a structured PluginManifest (CPTs, taxonomies, shortcodes, blocks, REST routes, AJAX handlers, admin pages, settings, meta boxes, cron, CLI, DB tables, templates, hooks, cross-layer wiring) |
 
-### Phase 2: Automated Checks
+### Code Quality
 | Tool | Description | Requires Site? |
 |------|-------------|----------------|
-| `wppqa_check_static` | Static code analysis | No |
-| `wppqa_check_api` | REST/AJAX verification | Yes |
-| `wppqa_check_database` | Database integrity | Yes |
-| `wppqa_check_browser` | Playwright browser tests | Yes |
-| `wppqa_check_ux` | Customer experience audit | No |
-| `wppqa_check_templates` | Template/hook analysis | No |
-| `wppqa_check_compat` | Compatibility checks | No |
-| `wppqa_check_i18n` | Internationalization audit | No |
-| `wppqa_check_performance` | Performance baseline | No |
-| `wppqa_execute_item` | Run a single test item | Depends |
+| `wppqa_setup_quality` | Scaffold `.phpcs.xml.dist`, `phpstan.neon`, `.eslintrc`, `.stylelintrc`, `.editorconfig`, `.pa11yci` | No |
+| `wppqa_run_code_checks` | Run ALL 14 code quality checks in one go (PHPCS, PHPStan, ESLint, Stylelint, PHPCompat, a11y grep, PHP lint, Composer audit, i18n, Plugin Check, bundle size, security, performance) | No |
+| `wppqa_check_code_quality` | Run a single code quality check by name | No |
+| `wppqa_check_a11y` | Full WCAG 2.1 AA audit (form labels, alt text, ARIA, focus, contrast, keyboard nav, screen-reader-text, outline:none, empty links, div-as-button, tabindex) | No |
 
-### Phase 3: Reporting
+### Product / UX / Templates
+| Tool | Description | Requires Site? |
+|------|-------------|----------------|
+| `wppqa_evaluate_product` | Score admin, frontend, and marketing fitness in one pass | No |
+| `wppqa_check_ux` | Help text, error messages, empty states, onboarding flow, consistency | No |
+| `wppqa_check_templates` | Theme override paths, hooks in templates, lifecycle hook placement | No |
+
+### Live-site Checks
+| Tool | Description | Requires Site? |
+|------|-------------|----------------|
+| `wppqa_check_api` | Verify REST + AJAX against a running Local WP site (auth/unauth, nonce, input validation, response format) | Yes |
+| `wppqa_check_database` | Custom table schema, settings persistence, CPT data, uninstall cleanup, orphaned data | Yes |
+| `wppqa_check_browser` | Playwright-based admin page loads, JS console errors, responsive viewports, form submissions | Yes |
+| `wppqa_probe_roles` | Hit every discovered REST endpoint + AJAX action as each configured role (guest / subscriber / advertiser / admin by default) and compare observed status to the route's declared `permission_callback`. Catches "advertiser portal calls a `manage_options`-gated route" bugs before they ship. | Yes |
+
+### Static Data-flow Checks
+| Tool | Description | Requires Site? |
+|------|-------------|----------------|
+| `wppqa_cross_reference_data` | Catalog every post_meta / user_meta / option / transient / DB column the plugin touches and flag stale-read stores (reader with no writer) as critical. Catches the exact "UI always shows 0" pattern that results from feature-wide key drift. | No |
+
+### Plan / Bug-History Workflow
+| Tool | Description | Requires Site? |
+|------|-------------|----------------|
+| `wppqa_bootstrap_plan` | Auto-generate a `plan/` folder for any plugin that doesn't have one — README, role-matrix.yml, fixtures/, flows/ stubs, regression/, coverage.md. Derived from the live manifest so every shortcode / REST route / admin page appears in coverage. | No |
+| `wppqa_learn_from_basecamp` | Read `plan/basecamp.yml`, consume pre-fetched cards from basecamp-mcp (no duplicate API client), write `plan/basecamp/ledger.md` + `ledger.json` with fix-SHA extraction, module hot-spots, regression-fixture coverage, RFT aging, **Jaccard duplicate detection** against historical Done. Two-phase call with a local per-card cache — re-runs only pay for cards whose `updated_at` moved. | No (consumes pre-fetched data) |
+
+### Market Research
 | Tool | Description |
 |------|-------------|
-| `wppqa_generate_report` | Graded QA report (A-F) from checker results |
-| `wppqa_run_automated_qa` | Full pipeline: scan -> check all -> report |
+| `wppqa_analyze_market` | Find competitors, compare features, identify gaps, generate roadmap |
 
-### Phase 4: Market Research
+### Master
 | Tool | Description |
 |------|-------------|
-| `wppqa_competitive_analysis` | Find competitors, compare features, identify gaps, generate roadmap |
+| `wppqa_audit_plugin` | Complete plugin audit — scan + all 14 code quality checks + product evaluation + UX + templates + a11y + market gaps + graded A-F report. Optional live site checks when `site_url` is provided. Output: markdown, json, sarif, or junit. |
+
+## Per-plugin `plan/` convention
+
+Every plugin gets its own `plan/` folder that the tools consume as the
+source of truth for manual and automated QA. `wppqa_bootstrap_plan`
+generates it from a fresh scan; subsequent tools read it.
+
+```
+plan/
+  README.md                  conventions + flow / regression schema
+  coverage.md                feature × layer × role checklist
+  role-matrix.yml            expected REST/AJAX status per role (wppqa_probe_roles)
+  lessons.md                 classes of bugs we have shipped — permanent
+  lessons.yml                machine-readable lesson gates
+  basecamp.yml               per-plugin Basecamp project + column IDs
+  basecamp/
+    ledger.md                committed bug-history ledger
+    ledger.json              machine-readable mirror
+    cache/                   per-card cache keyed by updated_at
+  fixtures/                  named DB seed states
+  flows/                     executable end-user journeys (yml)
+  regression/                one YAML per closed Basecamp card — permanent
+```
+
+See the full schema in
+[`wb-ad-manager-pro/plan/README.md`](https://github.com/vapvarun/wb-ad-manager-pro/blob/1.5.0/plan/README.md)
+which is the reference implementation.
 
 ## Setup
 
@@ -133,7 +177,7 @@ wppqa_check_performance({ plugin_path: "/path/to/my-plugin" })
 src/
 ├── index.ts                 # Entry point
 ├── server.ts                # MCP server + tool handlers
-├── tools.ts                 # Tool definitions (16 tools)
+├── tools.ts                 # Tool definitions (17 tools)
 ├── types.ts                 # TypeScript interfaces
 ├── scanner.ts               # Plugin scanner (21 regex scanners)
 ├── plan-generator.ts        # Test plan generator
