@@ -38,7 +38,7 @@ interface SettingKey {
  * about whether a student-facing template reads it.
  */
 const GENERIC_KEYS = new Set<string>([
-  // Previously blocked:
+  // Form control / nonce / pagination:
   'action',
   'nonce',
   'submit',
@@ -47,7 +47,8 @@ const GENERIC_KEYS = new Set<string>([
   'paged',
   's',
   'per_page',
-  // New — data primitives / list controls / auth:
+  'bulk_action',
+  // Data primitives / list controls / auth:
   'code',
   'value',
   'amount',
@@ -76,10 +77,25 @@ const GENERIC_KEYS = new Set<string>([
   'page_size',
   'sort',
   'direction',
-  // Obviously upload/control noise:
+  // Upload / control noise:
   'csv_file',
   'file',
   'upload',
+  // Setup-wizard transient fields. These are POSTed to a multi-step wizard
+  // that aggregates them into a derived settings option; the aggregation
+  // target (not the raw field name) is what templates read. Flagging these
+  // produces false positives on every directory/e-commerce wizard.
+  'country',
+  'city',
+  'latitude',
+  'longitude',
+  'is_global',
+  'map_provider',
+  'demo_pack',
+  'import_demo',
+  'wizard_step',
+  'listora_wizard_step',
+  'listora_type_filter',
 ]);
 
 export function checkWiringCompleteness(pluginPath: string): CheckerResult {
@@ -127,15 +143,33 @@ export function checkWiringCompleteness(pluginPath: string): CheckerResult {
   const userExcluded = readUserExclusions(pluginPath);
   const restArgKeys = collectRestArgKeys(pluginPath);
   const filterDefaultKeys = collectFilterDefaultKeys(pluginPath);
+  const constantBackedKeys = collectConstantBackedKeys(pluginPath);
   const keys = discoverKeys(pluginPath);
 
-  const templateFiles = findPhpFiles(templatesDir);
+  // A "template-like" read is anywhere OUTSIDE includes/admin/ — so the
+  // classic templates/ directory, every blocks/*/render.php server
+  // renderer, and any frontend-facing code in includes/. The original
+  // check was restricted to templates/ only, which missed block render
+  // files that bind settings straight into the frontend.
+  const readScanDirs = [
+    templatesDir,
+    join(pluginPath, 'blocks'),
+    join(pluginPath, 'includes'),
+    join(pluginPath, 'src'),
+  ].filter(dirExists);
+
   const templateContents = new Map<string, string>();
-  for (const file of templateFiles) {
-    try {
-      templateContents.set(file, readFileSync(file, 'utf-8'));
-    } catch {
-      /* skip */
+  const adminRoot = join(pluginPath, 'includes', 'admin');
+  for (const dir of readScanDirs) {
+    for (const file of findPhpFiles(dir)) {
+      // Reads in admin-facing code don't satisfy the wiring contract —
+      // we want to know the setting shows up somewhere non-admin.
+      if (file.startsWith(adminRoot)) continue;
+      try {
+        templateContents.set(file, readFileSync(file, 'utf-8'));
+      } catch {
+        /* skip */
+      }
     }
   }
 
@@ -159,6 +193,11 @@ export function checkWiringCompleteness(pluginPath: string): CheckerResult {
     // is wired to a backend surface" — skip the flag, it's not a dead flag.
     if (restArgKeys.has(key.key)) continue;
     if (filterDefaultKeys.has(key.key)) continue;
+    // Keys that are also declared as a class constant (e.g. const META_ICON
+    // = '_listora_icon') and referenced via `self::META_ICON` in code. The
+    // grep-based template reader can't resolve `get_term_meta( $id,
+    // self::META_ICON, true )` back to the underlying key string.
+    if (constantBackedKeys.has(key.key)) continue;
 
     const adminRef = key.adminRefs[0];
     issues.push({
@@ -370,15 +409,69 @@ function findMatchingCloser(
   return -1;
 }
 
+/**
+ * A template "reads" a setting key when it references it as:
+ *   1. Array-access: `$settings['key']` or `$view_data['key']`
+ *   2. Helper: `get_setting(..., 'key')`
+ *   3. Object property: `$obj->key`
+ *   4. WP meta helpers: `get_post_meta($id, 'key', ...)` — or with the common
+ *      `_` prefix convention (`listora_icon` POST key → `_listora_icon` term meta)
+ *   5. WP option helper: `get_option('key')` / `get_option('prefix_key')` (some
+ *      plugins prefix the option in the option table but post the raw name)
+ */
 function templateReadsKey(content: string, key: string): boolean {
-  const patterns = [
-    new RegExp(`\\[['"]${escapeRegex(key)}['"]\\]`),
-    new RegExp(`get_setting\\s*\\([^,]*,?\\s*['"]${escapeRegex(key)}['"]`),
-    new RegExp(`->${escapeRegex(key)}\\b`),
+  const escapedKey = escapeRegex(key);
+  const patterns: RegExp[] = [
+    new RegExp(`\\[['"]${escapedKey}['"]\\]`),
+    new RegExp(`get_setting\\s*\\([^,]*,?\\s*['"]${escapedKey}['"]`),
+    new RegExp(`->${escapedKey}\\b`),
+    new RegExp(`get_(?:post|term|user|comment|metadata)_meta\\s*\\([^,]+,\\s*['"]_?${escapedKey}['"]`, 'i'),
+    new RegExp(`get_option\\s*\\(\\s*['"][a-z_]*${escapedKey}['"]`, 'i'),
   ];
   return patterns.some((p) => p.test(content));
 }
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Collect POST keys whose values end up being written via a class
+ * constant (e.g. `const META_ICON = '_listora_icon'` then
+ * `update_term_meta($id, self::META_ICON, $_POST['listora_icon'])`).
+ *
+ * When a constant name is referenced in a meta/option write path, the
+ * POST key minus any leading underscore is considered "aware" — the
+ * template may read it via the constant rather than a string literal,
+ * which this file cannot trace statically.
+ */
+function collectConstantBackedKeys(pluginPath: string): Set<string> {
+  const keys = new Set<string>();
+  const constantDefs = new Map<string, string>(); // CONST_NAME -> meta key value
+
+  for (const file of findPhpFiles(pluginPath)) {
+    if (file.includes('/vendor/') || file.includes('/node_modules/')) continue;
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf-8');
+    } catch {
+      continue;
+    }
+
+    // Pattern: const META_ICON = '_listora_icon';
+    const constRe = /\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*['"]([^'"]+)['"]/g;
+    for (const m of content.matchAll(constRe)) {
+      constantDefs.set(m[1], m[2]);
+    }
+  }
+
+  // Every constant's value with leading underscore stripped becomes
+  // a "safe" POST key — it may have been stored via the constant and
+  // therefore may be read via the constant in templates.
+  for (const value of constantDefs.values()) {
+    const stripped = value.replace(/^_+/, '');
+    if (stripped) keys.add(stripped);
+  }
+
+  return keys;
 }

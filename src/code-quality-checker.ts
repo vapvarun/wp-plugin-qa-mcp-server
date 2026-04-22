@@ -19,21 +19,48 @@ type CodeCheckType = 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' 
 
 export function runAllCodeChecks(pluginPath: string): CheckerResult[] {
   const results: CheckerResult[] = [];
-  results.push(runPhpcs(pluginPath));
+  const phpcsResult = runPhpcs(pluginPath);
+  results.push(phpcsResult);
   results.push(runPhpstan(pluginPath));
   results.push(runEslint(pluginPath));
   results.push(runStylelint(pluginPath));
   results.push(runPhpCompat(pluginPath));
-  results.push(runA11yGrep(pluginPath));
+
+  // Skip the grep-only scans when their authoritative tool is installed.
+  // WPCS rules cover `WordPress.Security.*` (echo escaping, $wpdb->prepare,
+  // nonce verification) and `WordPress.WP.PostsPerPage` (unbounded query) —
+  // re-running grep-only approximations produces duplicate findings with
+  // more false positives than signal.
+  const phpcsAvailable = !isSkipped(phpcsResult);
+  const pluginCheckResult = runPluginCheck(pluginPath);
+  const pluginCheckAvailable = !isSkipped(pluginCheckResult);
+
+  if (!phpcsAvailable) {
+    results.push(runA11yGrep(pluginPath));
+    results.push(runSecurityScan(pluginPath));
+    results.push(runPerformanceScan(pluginPath));
+  } else {
+    results.push(skipResult('a11y-grep' as TestCategory, 'Skipped: superseded by phpcs + wppqa_check_a11y — run those instead.'));
+    results.push(skipResult('security-scan' as TestCategory, 'Skipped: superseded by phpcs WordPress.Security.* rules.'));
+    results.push(skipResult('performance-scan' as TestCategory, 'Skipped: superseded by phpcs WordPress.WP.PostsPerPage + WordPress.DB.SlowDBQuery rules.'));
+  }
+
+  if (!pluginCheckAvailable) {
+    results.push(runPcpDeep(pluginPath));
+  } else {
+    results.push(skipResult('pcp-deep' as TestCategory, 'Skipped: superseded by Plugin Check CLI (`plugin-check` task).'));
+  }
+
   results.push(runPhpLint(pluginPath));
   results.push(runComposerAudit(pluginPath));
   results.push(runI18nCheck(pluginPath));
-  results.push(runPluginCheck(pluginPath));
+  results.push(pluginCheckResult);
   results.push(runBundleSize(pluginPath));
-  results.push(runSecurityScan(pluginPath));
-  results.push(runPerformanceScan(pluginPath));
-  results.push(runPcpDeep(pluginPath));
   return results;
+}
+
+function isSkipped(result: CheckerResult): boolean {
+  return result.skipped > 0 && result.passed === 0 && result.failed === 0;
 }
 
 export function runSingleCheck(pluginPath: string, check: CodeCheckType): CheckerResult {

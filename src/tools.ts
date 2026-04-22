@@ -66,7 +66,10 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_check_code_quality',
     description:
-      'Run a SINGLE code quality check by name. Use when you want just one tool instead of all 11.',
+      'Run a SINGLE code quality check by name. ' +
+      'Prefer the tool-backed checks (phpcs, phpstan, eslint, stylelint, phpcompat, plugin-check, php-lint, composer-audit, i18n) — those delegate to the underlying tool. ' +
+      'The grep-only scans (security-scan, performance-scan, pcp-deep, a11y-grep) are NOT authoritative: WPCS and Plugin Check cover the same patterns with data-flow awareness and produce far fewer false positives. ' +
+      'Use the grep scans only when phpcs / plugin-check are not installed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -77,7 +80,7 @@ export const tools: Tool[] = [
         check: {
           type: 'string',
           enum: ['phpcs', 'phpstan', 'eslint', 'stylelint', 'phpcompat', 'a11y-grep', 'php-lint', 'composer-audit', 'i18n', 'plugin-check', 'bundle-size', 'security-scan', 'performance-scan', 'pcp-deep'],
-          description: 'Which quality check to run',
+          description: 'Which quality check to run. Prefer phpcs / plugin-check over the grep-only variants (security-scan, performance-scan, pcp-deep, a11y-grep).',
         },
       },
       required: ['plugin_path', 'check'],
@@ -146,6 +149,24 @@ export const tools: Tool[] = [
     name: 'wppqa_check_templates',
     description:
       'Theme override and hook analysis: template files, override paths, hooks in templates, lifecycle hooks (activation, deactivation, uninstall), filter/action placement.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── 8b. Template Loader <-> Template Contract Drift ─────────
+  {
+    name: 'wppqa_check_template_contract',
+    description:
+      'Cross-layer flow check: parses every `{prefix}_get_template()` / `{prefix}_get_template_html()` caller in the plugin, extracts the `args` keys each call passes, then scans the matching template file for variable reads. Flags any $var consumed in a template that no loader actually supplies in its args array. ' +
+      'This catches the silent-bug class where a template quietly references a missing variable, renders an empty or warning, and nothing else detects it — WPCS, PHPStan, and Plugin Check analyze files in isolation and cannot see the loader<->template contract.',
     inputSchema: {
       type: 'object',
       properties: {

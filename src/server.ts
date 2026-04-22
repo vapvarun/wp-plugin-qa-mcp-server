@@ -20,6 +20,7 @@ import { checkDatabase } from './db-checker.js';
 import { checkBrowser } from './browser-runner.js';
 import { checkUx } from './ux-checker.js';
 import { checkTemplates } from './template-checker.js';
+import { checkTemplateContracts } from './template-contract-checker.js';
 import { checkAccessibility } from './a11y-checker.js';
 import { evaluateAdmin } from './admin-evaluator.js';
 import { evaluateFrontend } from './frontend-evaluator.js';
@@ -102,6 +103,8 @@ export class WpPluginQaServer {
             return this.handleCheckUx(toolArgs.plugin_path as string);
           case 'wppqa_check_templates':
             return this.handleCheckTemplates(toolArgs.plugin_path as string);
+          case 'wppqa_check_template_contract':
+            return this.handleCheckTemplateContract(toolArgs.plugin_path as string);
 
           // 9-11. Live site checks
           case 'wppqa_check_api':
@@ -213,6 +216,12 @@ export class WpPluginQaServer {
   private handleCheckTemplates(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const result = checkTemplates(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckTemplateContract(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkTemplateContracts(pluginPath);
     return this.formatCheckerResult(result);
   }
 
