@@ -14,6 +14,7 @@ export declare class WpPluginQaServer {
     private handleCheckBrowser;
     private handleCheckUx;
     private handleCheckTemplates;
+    private handleCheckTemplateContract;
     private handleCheckWiringCompleteness;
     private handleCheckUxGuidelines;
     private handleCheckPluginDevRules;
