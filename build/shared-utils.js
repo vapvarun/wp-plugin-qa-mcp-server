@@ -4,7 +4,22 @@
  */
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, basename } from 'path';
-const DEFAULT_EXCLUDE_DIRS = ['vendor', 'node_modules', 'build', 'dist', '.git', '.svn'];
+// Directories excluded from every static check. `tests` is here because
+// test fixtures routinely contain deliberately-malformed HTML strings,
+// mock secrets, and $wpdb calls that a grep-based scanner flags as
+// production issues. `bin` is plugin-provided install scripts.
+const DEFAULT_EXCLUDE_DIRS = [
+    'vendor',
+    'node_modules',
+    'build',
+    'dist',
+    '.git',
+    '.svn',
+    'tests',
+    'test',
+    '__tests__',
+    'bin',
+];
 /**
  * Find all PHP files in a directory tree, excluding common non-project dirs.
  */
