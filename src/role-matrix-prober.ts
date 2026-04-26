@@ -84,25 +84,32 @@ export const DEFAULT_ROLES: RoleProfile[] = [
   {
     id: 'subscriber',
     label: 'Subscriber',
-    authType: 'cookie',
-    credentials: { cookieName: 'wbam_dev_as', cookieValue: 'subscriber' },
+    authType: 'application-password',
+    credentials: { username: '', appPassword: '' },
     expectedCapability: 'read',
   },
   {
-    id: 'advertiser',
-    label: 'Advertiser',
-    authType: 'cookie',
-    credentials: { cookieName: 'wbam_dev_as', cookieValue: 'localshop' },
-    expectedCapability: 'read',
+    id: 'editor',
+    label: 'Editor',
+    authType: 'application-password',
+    credentials: { username: '', appPassword: '' },
+    expectedCapability: 'edit_others_posts',
   },
   {
     id: 'admin',
     label: 'Administrator',
-    authType: 'cookie',
-    credentials: { cookieName: 'wbam_dev_as', cookieValue: 'admin' },
+    authType: 'application-password',
+    credentials: { username: '', appPassword: '' },
     expectedCapability: 'manage_options',
   },
 ];
+
+// Note: callers pass their own `roles` array via the tool args to override
+// these defaults. The defaults use application-password auth (RFC 7617 Basic
+// over HTTPS, supported on every WordPress 5.6+ install) instead of a
+// project-specific dev cookie. Site owners using a custom auth-bypass cookie
+// can still pass it as `authType: 'cookie'` with their own `cookieName` /
+// `cookieValue`.
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const BODY_EXCERPT_LEN = 200;

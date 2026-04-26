@@ -13,6 +13,30 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, basename } from 'path';
 import { findPhpFiles, safeReadFile, detectPluginSlug } from './shared-utils.js';
+import { scanPlugin } from './scanner.js';
+
+/**
+ * Derive a Composer-safe vendor string from the plugin's `Author` header.
+ * Lowercases, replaces non-alphanumerics with hyphens, and trims edges.
+ * Returns the slug itself when the author cannot be determined or
+ * normalised - producing `slug/slug` as a sensible self-vendored fallback
+ * (still valid Composer format, signals "no upstream vendor identified").
+ */
+function deriveComposerVendor(pluginPath: string, slug: string): string {
+  try {
+    const author = scanPlugin(pluginPath).header.author || '';
+    const vendor = author
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    if (vendor && /^[a-z][a-z0-9-]*$/.test(vendor)) {
+      return vendor;
+    }
+  } catch {
+    // fall through to slug-as-vendor
+  }
+  return slug;
+}
 
 export interface ScaffoldResult {
   created: string[];
@@ -590,8 +614,9 @@ function updateComposerForPhpstan(pluginPath: string, result: ScaffoldResult): v
 
   if (!existsSync(composerPath)) {
     const slug = detectPluginSlug(pluginPath);
+    const vendor = deriveComposerVendor(pluginPath, slug);
     const composer = {
-      name: `wbcom/${slug}`,
+      name: `${vendor}/${slug}`,
       type: 'wordpress-plugin',
       license: 'GPL-2.0-or-later',
       require: { php: '>=7.4' },

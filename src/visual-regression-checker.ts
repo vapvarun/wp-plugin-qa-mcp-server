@@ -35,6 +35,7 @@ import {
   dirExists,
   detectPluginSlug,
 } from './shared-utils.js';
+import { scanPlugin } from './scanner.js';
 
 export interface VisualRegressionOptions {
   pluginPath: string;
@@ -243,84 +244,36 @@ export function checkVisualRegression(opts: VisualRegressionOptions): CheckerRes
  * Detects the plugin's CSS prefix from `--prefix-*` variable usage in assets/.
  * Mirrors the detection in ux-guidelines-checker.ts so both checkers agree.
  */
+/**
+ * Plugin-agnostic CSS prefix detection. Delegates to the canonical scanner
+ * implementation (`scanPlugin().cssPrefix`) which reads asset CSS files,
+ * frequency-counts `--<token>-*` custom properties, and falls back to the
+ * plugin slug. Replaces the previous local implementation that hard-coded
+ * `'lrn'` as the fallback.
+ */
 function detectCssPrefix(pluginPath: string): string {
-  const assetsDir = join(pluginPath, 'assets');
-  if (!dirExists(assetsDir)) return 'lrn';
-  const cssFiles = findFilesByExt(assetsDir, '.css');
-  const counter = new Map<string, number>();
-  for (const file of cssFiles) {
-    let content: string;
-    try {
-      content = readFileSync(file, 'utf-8');
-    } catch {
-      continue;
-    }
-    const matches = content.matchAll(/--([a-z]+)-[a-z0-9-]+/g);
-    for (const match of matches) {
-      const pre = match[1];
-      if (pre.length < 2 || pre.length > 6) continue;
-      counter.set(pre, (counter.get(pre) || 0) + 1);
-    }
-  }
-  let best = 'lrn';
-  let bestCount = 0;
-  for (const [pre, count] of counter.entries()) {
-    if (count > bestCount) {
-      best = pre;
-      bestCount = count;
-    }
-  }
-  return best;
+  return scanPlugin(pluginPath).cssPrefix;
 }
 
 /**
- * Discover admin URLs by scanning PHP for add_submenu_page / add_menu_page.
- * The slug is the 4th argument for submenu / 3rd for menu.
+ * Discover admin URLs from the canonical PluginManifest. The scanner
+ * already extracts every add_submenu_page / add_menu_page registration
+ * with file + line attribution; this used to re-walk the PHP tree on
+ * every visual-regression run.
  */
 function discoverAdminUrls(pluginPath: string, siteUrl: string): AdminUrl[] {
-  const urls: AdminUrl[] = [];
+  const manifest = scanPlugin(pluginPath);
   const base = siteUrl.replace(/\/$/, '');
-  const phpFiles = findPhpFiles(pluginPath);
-
-  const submenuRe =
-    /add_submenu_page\s*\(\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]/g;
-  const menuRe =
-    /add_menu_page\s*\(\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]/g;
-
-  for (const file of phpFiles) {
-    let content: string;
-    try {
-      content = readFileSync(file, 'utf-8');
-    } catch {
-      continue;
-    }
-    const lines = content.split('\n');
-
-    for (const match of content.matchAll(submenuRe)) {
-      const pageTitle = match[2];
-      const slug = match[4];
-      if (!slug) continue;
-      const line = content.substring(0, match.index ?? 0).split('\n').length;
-      urls.push(buildAdminUrl(slug, pageTitle, file, line, base));
-    }
-
-    for (const match of content.matchAll(menuRe)) {
-      const pageTitle = match[1];
-      const slug = match[3];
-      if (!slug) continue;
-      const line = content.substring(0, match.index ?? 0).split('\n').length;
-      urls.push(buildAdminUrl(slug, pageTitle, file, line, base));
-    }
-    void lines;
-  }
-
-  // De-dupe by URL
   const seen = new Set<string>();
-  return urls.filter((u) => {
-    if (seen.has(u.url)) return false;
+  const urls: AdminUrl[] = [];
+  for (const page of manifest.features.adminPages) {
+    if (!page.slug) continue;
+    const u = buildAdminUrl(page.slug, page.title, page.file, page.line, base);
+    if (seen.has(u.url)) continue;
     seen.add(u.url);
-    return true;
-  });
+    urls.push(u);
+  }
+  return urls;
 }
 
 function buildAdminUrl(slug: string, title: string, file: string, line: number, base: string): AdminUrl {

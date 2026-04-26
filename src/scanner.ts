@@ -68,10 +68,25 @@ export function scanPlugin(pluginPath: string): PluginManifest {
   const templateSelectors = scanTemplateSelectors(phpFiles, phpContents, pluginPath);
   const wiringIssues = analyzeWiring(ajaxHandlers, jsAjaxCalls, jsEventHandlers, localizeScripts, templateSelectors);
 
+  // Plugin-wide signals consumed by multiple checkers (consolidated here so
+  // the consumers do not each re-scan the asset / PHP tree).
+  const cssPrefix = detectCssPrefix(cssFiles, header.slug);
+  const hasEnqueueCalls = phpContentsAnyMatch(
+    phpContents,
+    /wp_enqueue_(?:script|style)\s*\(/,
+  );
+  const hasIntegrationConditionals = phpContentsAnyMatch(
+    phpContents,
+    /(?:class_exists|function_exists|defined)\s*\(\s*['"][A-Za-z_][A-Za-z0-9_\\]+['"]/,
+  );
+
   return {
     header,
     pluginPath,
     scannedAt: new Date().toISOString(),
+    cssPrefix,
+    hasEnqueueCalls,
+    hasIntegrationConditionals,
     features: {
       cpts,
       taxonomies,
@@ -1294,4 +1309,63 @@ function analyzeWiring(
   }
 
   return issues;
+}
+
+/* ─── Plugin-wide signals (consumed by multiple checkers) ───────── */
+
+/**
+ * Detect the plugin's CSS prefix by frequency-counting `--<token>-*`
+ * custom-property prefixes in the asset CSS files. Falls back to the
+ * first hyphen-delimited segment of the plugin slug when no CSS files
+ * exist or no custom properties are defined (e.g. a plugin that ships
+ * without front-end assets).
+ *
+ * Replaces three independent implementations in:
+ *   - ux-guidelines-checker.ts (was returning hard-coded 'lrn')
+ *   - visual-regression-checker.ts (same)
+ *   - editor-layout-bias-checker.ts (PHP-class-token variant)
+ *
+ * Result is plugin-agnostic: the fallback is derived from the plugin
+ * slug rather than the previous Learnomy default.
+ */
+function detectCssPrefix(cssFiles: string[], slug: string): string {
+  const fallback = (slug || 'plugin').split('-')[0] || 'plugin';
+  if (cssFiles.length === 0) {
+    return fallback;
+  }
+  const counts = new Map<string, number>();
+  const tokenRe = /--([a-z][a-z0-9]*)-/gi;
+  for (const file of cssFiles) {
+    const text = safeReadFile(file);
+    if (!text) continue;
+    for (const m of text.matchAll(tokenRe)) {
+      const token = m[1].toLowerCase();
+      counts.set(token, (counts.get(token) ?? 0) + 1);
+    }
+  }
+  if (counts.size === 0) {
+    return fallback;
+  }
+  let best = fallback;
+  let bestCount = 0;
+  for (const [token, count] of counts) {
+    if (count > bestCount) {
+      best = token;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/** Tiny helper - does any phpContents value match the regex? */
+function phpContentsAnyMatch(
+  phpContents: Map<string, string>,
+  pattern: RegExp,
+): boolean {
+  for (const text of phpContents.values()) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  return false;
 }

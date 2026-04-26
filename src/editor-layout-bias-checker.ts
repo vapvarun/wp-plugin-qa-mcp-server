@@ -22,6 +22,7 @@ import {
   generateTestId,
   dirExists,
 } from './shared-utils.js';
+import { scanPlugin } from './scanner.js';
 
 interface RegionStats {
   cards: number;
@@ -228,32 +229,12 @@ function countInputs(body: string): number {
   return count;
 }
 
+/**
+ * Plugin-agnostic CSS prefix detection. Delegates to the canonical scanner
+ * implementation (`scanPlugin().cssPrefix`) which reads asset CSS files
+ * and falls back to the plugin slug. Replaces the previous local
+ * implementation that hard-coded `'lrn'` as the fallback.
+ */
 function detectCssPrefix(pluginPath: string): string {
-  const viewsDir = join(pluginPath, 'includes', 'admin', 'views');
-  if (!dirExists(viewsDir)) return 'lrn';
-
-  const files = findPhpFiles(viewsDir).slice(0, 6);
-  const counter = new Map<string, number>();
-  for (const file of files) {
-    let content: string;
-    try {
-      content = readFileSync(file, 'utf-8');
-    } catch {
-      continue;
-    }
-    const re = /\b([a-z]{2,6})-(?:admin-card|card|settings-section|page-header)\b/g;
-    for (const m of Array.from(content.matchAll(re))) {
-      const pre = m[1];
-      counter.set(pre, (counter.get(pre) || 0) + 1);
-    }
-  }
-  let best = 'lrn';
-  let bestCount = 0;
-  for (const [pre, count] of counter.entries()) {
-    if (count > bestCount) {
-      best = pre;
-      bestCount = count;
-    }
-  }
-  return best;
+  return scanPlugin(pluginPath).cssPrefix;
 }

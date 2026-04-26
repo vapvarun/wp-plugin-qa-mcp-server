@@ -204,6 +204,16 @@ export interface PluginManifest {
     header: PluginHeader;
     pluginPath: string;
     scannedAt: string;
+    /** CSS prefix used by the plugin's design tokens, e.g. `lrn` for Learnomy or `jt` for Jetonomy.
+     * Detected from the most-frequent `--<token>-*` custom property prefix in `assets/**\/*.css`,
+     * with fallback to `header.slug.split('-')[0]` when no CSS files exist. Consumers should
+     * prefer this over re-scanning the assets dir. */
+    cssPrefix: string;
+    /** True if any PHP file in the plugin contains a `wp_enqueue_script` or `wp_enqueue_style` call. */
+    hasEnqueueCalls: boolean;
+    /** True if any PHP file contains a `class_exists`, `function_exists`, or `defined` guard
+     * that gates third-party integration code. */
+    hasIntegrationConditionals: boolean;
     features: {
         cpts: CptInfo[];
         taxonomies: TaxonomyInfo[];

@@ -23,8 +23,9 @@
  *    `{prefix}-NAME.css` filenames.
  */
 import { readFileSync } from 'fs';
-import { join, basename } from 'path';
+import { join } from 'path';
 import { findPhpFiles, findFilesByExt, getLineNumber, relativePath, generateTestId, dirExists, } from './shared-utils.js';
+import { scanPlugin } from './scanner.js';
 export function checkUxGuidelines(pluginPath) {
     const startTime = Date.now();
     const issues = [];
@@ -48,43 +49,15 @@ export function checkUxGuidelines(pluginPath) {
         duration: Date.now() - startTime,
     };
 }
+/**
+ * Plugin-agnostic CSS prefix detection. Delegates to the canonical scanner
+ * implementation (`scanPlugin().cssPrefix`) which reads asset CSS files,
+ * frequency-counts `--<token>-*` custom properties, and falls back to the
+ * plugin slug. Replaces the previous local implementation that hard-coded
+ * `'lrn'` as the fallback.
+ */
 function detectCssPrefix(pluginPath) {
-    const cssFiles = findCssFiles(pluginPath);
-    const counter = new Map();
-    const filenameHits = new Map();
-    for (const file of cssFiles) {
-        let content;
-        try {
-            content = readFileSync(file, 'utf-8');
-        }
-        catch {
-            continue;
-        }
-        const base = basename(file, '.css');
-        const matches = content.matchAll(/--([a-z]+)-[a-z0-9-]+/g);
-        for (const match of matches) {
-            const pre = match[1];
-            if (pre.length < 2 || pre.length > 6)
-                continue;
-            counter.set(pre, (counter.get(pre) || 0) + 1);
-            if (base === pre || base.startsWith(`${pre}-`)) {
-                filenameHits.set(pre, (filenameHits.get(pre) || 0) + 1);
-            }
-        }
-    }
-    let best = 'lrn';
-    let bestCount = 0;
-    let bestFilenameHits = 0;
-    for (const [pre, count] of counter.entries()) {
-        const fHits = filenameHits.get(pre) || 0;
-        if (count > bestCount ||
-            (count === bestCount && fHits > bestFilenameHits)) {
-            best = pre;
-            bestCount = count;
-            bestFilenameHits = fHits;
-        }
-    }
-    return best;
+    return scanPlugin(pluginPath).cssPrefix;
 }
 function findCssFiles(pluginPath) {
     const assetsDir = join(pluginPath, 'assets');

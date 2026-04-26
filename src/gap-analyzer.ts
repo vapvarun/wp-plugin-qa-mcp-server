@@ -304,14 +304,11 @@ const CONDITIONAL_RULES: ConditionalRule[] = [
   {
     id: 'INTEGRATION-CONDITIONALS',
     trigger: (m) => m.features.integrations.length > 0,
-    check: (m) => {
-      const phpFiles = findPhpFiles(m.pluginPath);
-      for (const file of phpFiles) {
-        const content = safeReadFile(file);
-        if (/class_exists|function_exists|defined\s*\(/.test(content)) return true;
-      }
-      return false;
-    },
+    // Read the precomputed signal from the manifest instead of re-walking
+    // the PHP tree. Scanner sets `hasIntegrationConditionals` to true when
+    // any PHP file contains a class_exists / function_exists / defined
+    // guard.
+    check: (m) => m.hasIntegrationConditionals,
     triggerLabel: 'Has third-party integrations',
     finding: 'Integrations may not check if dependencies exist before loading',
     recommendation: 'Wrap integration code in class_exists()/function_exists() checks to prevent fatal errors',
@@ -456,14 +453,10 @@ const UNCONDITIONAL_RULES: UnconditionalRule[] = [
   },
   {
     id: 'UNCON-ASSETS-ENQUEUE',
-    check: (m) => {
-      const phpFiles = findPhpFiles(m.pluginPath);
-      for (const file of phpFiles) {
-        const content = safeReadFile(file);
-        if (/wp_enqueue_script|wp_enqueue_style/.test(content)) return true;
-      }
-      return false;
-    },
+    // Read the precomputed signal from the manifest. Scanner sets
+    // `hasEnqueueCalls` to true when any PHP file contains a
+    // wp_enqueue_script or wp_enqueue_style call.
+    check: (m) => m.hasEnqueueCalls,
     finding: 'No wp_enqueue_script/wp_enqueue_style calls found',
     recommendation: 'Use WordPress enqueue system for all scripts and styles (never direct <script>/<link> tags)',
     priority: 'important',

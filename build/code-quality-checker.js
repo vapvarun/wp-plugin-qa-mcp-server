@@ -910,9 +910,28 @@ export function runPcpDeep(pluginPath) {
             }
         }
     }
-    // 4. Prefixing — functions and classes should use plugin prefix
-    const slug = basename(pluginPath).replace(/-/g, '_');
-    const prefixPattern = new RegExp(`^(?:function|class)\\s+(${slug}|wbam|wbcom|bp_|bb_)`, 'i');
+    // 4. Prefixing — functions and classes should use plugin prefix.
+    // Accept any prefix that is plausibly the plugin's own: the directory
+    // basename, the text-domain (where defined), the underscore variants
+    // of either, and the first hyphen-delimited segment of either. This
+    // is plugin-agnostic: a plugin called "give-donations" with text
+    // domain "give" accepts `give_*`, `give-donations_*`, and the
+    // underscore variants, but does not silently accept unrelated
+    // prefixes like another vendor's tokens.
+    const slugDash = basename(pluginPath);
+    const slugUnderscore = slugDash.replace(/-/g, '_');
+    const slugShort = slugDash.split('-')[0];
+    const prefixCandidates = new Set([
+        slugDash,
+        slugUnderscore,
+        slugShort,
+        `${slugShort}_`,
+    ]);
+    const prefixAlternation = Array.from(prefixCandidates)
+        .filter(Boolean)
+        .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|');
+    const prefixPattern = new RegExp(`^(?:function|class)\\s+(${prefixAlternation})`, 'i');
     let unprefixedCount = 0;
     const unprefixedSamples = [];
     for (const file of phpFiles) {

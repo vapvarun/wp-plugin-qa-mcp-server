@@ -75,18 +75,10 @@ function checkDataCleanup(manifest) {
     const issues = [];
     const uninstallFile = join(manifest.pluginPath, 'uninstall.php');
     const hasUninstallFile = existsSync(uninstallFile);
-    let hasUninstallHook = false;
-    const phpFiles = findPhpFiles(manifest.pluginPath);
-    for (const file of phpFiles) {
-        try {
-            const content = readFileSync(file, 'utf-8');
-            if (/register_uninstall_hook\s*\(/.test(content)) {
-                hasUninstallHook = true;
-                break;
-            }
-        }
-        catch { /* skip */ }
-    }
+    // Use the canonical scanner output instead of re-walking the PHP tree.
+    // ActivationHookInfo records every register_uninstall_hook call with
+    // type === 'uninstall'; an absent record means no hook is registered.
+    const hasUninstallHook = manifest.features.activationHooks.some((h) => h.type === 'uninstall');
     if (!hasUninstallFile && !hasUninstallHook) {
         if (manifest.features.dbTables.length > 0 || manifest.features.settings.length > 0) {
             issues.push({
