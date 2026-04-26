@@ -540,7 +540,7 @@ export const tools: Tool[] = [
   {
     name: 'wppqa_audit_init_journeys',
     description:
-      'Scaffold a starter `docs/audit/journeys.json` inside a plugin so the journey-by-journey customer-experience audit can run on it. The starter file contains a generic 4-journey skeleton (first-run / daily-use / admin / integrations) that the plugin team customises by listing the real customer-facing surfaces of their plugin. The audit method is plugin-agnostic; the journey list is plugin-specific. Plugin owns its journeys.json (lives in the plugin tree, versioned alongside the code).',
+      'Scaffold `docs/audit/journeys.json` inside a plugin so the journey-by-journey customer-experience audit can run on it. By default, runs wppqa_scan_plugin first and auto-discovers customer-facing surfaces (CPTs, taxonomies, shortcodes, blocks, REST routes, admin pages, cron, CLI, DB tables, integrations) into a populated journeys list - guarantees 100% coverage of what the code declares. Pass `starter_only: true` to skip auto-discovery and use a generic 4-journey skeleton instead (useful for non-plugin paths or when the scanner cannot run). The plugin team then refines product_name, expectation copy, and journey grouping in the generated file.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -554,12 +554,35 @@ export const tools: Tool[] = [
             'Overwrite an existing journeys.json. Default: false (preserves existing).',
           default: false,
         },
+        starter_only: {
+          type: 'boolean',
+          description:
+            'Skip auto-discovery from wppqa_scan_plugin and use the generic starter skeleton instead. Default: false.',
+          default: false,
+        },
       },
       required: ['plugin_path'],
     },
   },
 
-  // ─── 22. Journey audit: build per-journey briefings ───────────
+  // ─── 22a. Journey audit: coverage check ───────────────────────
+  {
+    name: 'wppqa_audit_coverage_check',
+    description:
+      'Re-run wppqa_scan_plugin against the plugin and compare the discovered surfaces (CPTs, taxonomies, shortcodes, blocks, REST namespaces, AJAX handlers, admin pages, cron jobs, CLI commands, DB tables, detected integrations) against the journeys defined in `docs/audit/journeys.json`. Reports any surface in the manifest that is not mentioned anywhere in the journeys list. Use this to confirm 100% coverage before dispatching the audit; or to detect drift after new code lands.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── 22b. Journey audit: build per-journey briefings ──────────
   {
     name: 'wppqa_audit_get_briefing',
     description:

@@ -47,6 +47,7 @@ import {
   initJourneys,
   getBriefing as getAuditBriefing,
   consolidateMatrix as consolidateAuditMatrix,
+  coverageCheck as auditCoverageCheck,
 } from './journey-audit.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
@@ -171,11 +172,16 @@ export class WpPluginQaServer {
           case 'wppqa_audit_plugin':
             return await this.handleAuditPlugin(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined, toolArgs.format as string | undefined);
 
-          // 21-23. Journey-by-journey customer-experience audit
+          // 21-24. Journey-by-journey customer-experience audit
           case 'wppqa_audit_init_journeys':
             return this.handleAuditInitJourneys(
               toolArgs.plugin_path as string,
               toolArgs.force as boolean | undefined,
+              toolArgs.starter_only as boolean | undefined,
+            );
+          case 'wppqa_audit_coverage_check':
+            return this.handleAuditCoverageCheck(
+              toolArgs.plugin_path as string,
             );
           case 'wppqa_audit_get_briefing':
             return this.handleAuditGetBriefing(
@@ -690,19 +696,48 @@ export class WpPluginQaServer {
   private handleAuditInitJourneys(
     pluginPath: string,
     force: boolean | undefined,
+    starterOnly: boolean | undefined,
   ): CallToolResult {
     const result = initJourneys({
       plugin_path: pluginPath,
       force: force ?? false,
+      starter_only: starterOnly ?? false,
     });
     const lines: string[] = [];
     lines.push(
       result.created
-        ? `Created starter journeys.json at ${result.path}.`
-        : `journeys.json already exists at ${result.path}.`,
+        ? `Created journeys.json at ${result.path} (source: ${result.source}${
+            typeof result.surfaces_discovered === 'number'
+              ? `, ${result.surfaces_discovered} surfaces`
+              : ''
+          }).`
+        : `journeys.json already exists at ${result.path} (source: ${result.source}).`,
     );
     lines.push('');
     lines.push(result.preview);
+    lines.push('');
+    lines.push(`JSON: ${JSON.stringify(result)}`);
+    return this.successResult(lines.join('\n'));
+  }
+
+  private handleAuditCoverageCheck(pluginPath: string): CallToolResult {
+    const result = auditCoverageCheck({ plugin_path: pluginPath });
+    const lines: string[] = [];
+    lines.push(
+      `Coverage: ${result.covered}/${result.total_manifest_surfaces} (${result.coverage_percent}%)`,
+    );
+    lines.push('');
+    if (result.missing.length === 0) {
+      lines.push(
+        'Every surface in the plugin manifest is referenced in journeys.json. 100% coverage.',
+      );
+    } else {
+      lines.push(`Missing ${result.missing.length} surfaces:`);
+      lines.push('');
+      for (const m of result.missing) {
+        lines.push(`- **${m.surface_kind}** \`${m.identifier}\` - ${m.suggestion}`);
+      }
+    }
     lines.push('');
     lines.push(`JSON: ${JSON.stringify(result)}`);
     return this.successResult(lines.join('\n'));

@@ -24,6 +24,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { scanPlugin } from './scanner.js';
+import type { PluginManifest } from './types.js';
 
 const JOURNEYS_RELPATH = 'docs/audit/journeys.json';
 
@@ -177,30 +179,328 @@ const STARTER_JOURNEYS: JourneysFile = {
   ],
 };
 
+/* ─── Auto-discovery from PluginManifest ──────────────────── */
+
+const SETUP_PAGE_RE = /setup|wizard|onboard/i;
+
+function safeId(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function autoDiscoverJourneys(manifest: PluginManifest): JourneysFile {
+  const journeys: Journey[] = [];
+  const features = manifest.features;
+
+  /* Journey 1: First-run + setup */
+  const firstRun: Journey = {
+    id: 'first-run-setup',
+    name: 'First-run + setup',
+    perspective: 'Site owner who just activated the plugin',
+    features: [
+      {
+        id: 'plugin-activation',
+        name: 'Plugin activation',
+        expectation:
+          'Activate the plugin, see a clear "what now?" prompt within 30 seconds',
+      },
+    ],
+  };
+  if (features.activationHooks.length > 0) {
+    firstRun.features.push({
+      id: 'activation-hooks',
+      name: `Activation hooks (${features.activationHooks.length})`,
+      expectation:
+        'All activation hooks complete cleanly; plugin is in a working state on the next page load',
+    });
+  }
+  const setupPage = features.adminPages.find(
+    (p) => SETUP_PAGE_RE.test(p.slug) || SETUP_PAGE_RE.test(p.title),
+  );
+  if (setupPage) {
+    firstRun.features.push({
+      id: 'setup-wizard',
+      name: `Setup wizard (${setupPage.title})`,
+      expectation:
+        'Wizard produces a working plugin state in <5 minutes; what is still empty after?',
+    });
+  }
+  if (features.dbTables.length > 0) {
+    firstRun.features.push({
+      id: 'db-tables-created',
+      name: `Database tables (${features.dbTables.length})`,
+      expectation:
+        'All custom tables exist after activation; dbDelta migrations run cleanly on upgrade',
+    });
+  }
+  if (features.customRoles.length > 0) {
+    firstRun.features.push({
+      id: 'custom-roles',
+      name: `Custom roles / capabilities (${features.customRoles.length})`,
+      expectation:
+        'Custom roles and capabilities register on activate; cleaned up on uninstall',
+    });
+  }
+  journeys.push(firstRun);
+
+  /* Journey 2: Daily use (frontend) */
+  const dailyUse: Journey = {
+    id: 'daily-use',
+    name: 'Daily use (frontend)',
+    perspective: 'A typical site visitor / member using the plugin day-to-day',
+    features: [],
+  };
+  for (const cpt of features.cpts) {
+    dailyUse.features.push({
+      id: `cpt-frontend-${safeId(cpt.postType)}`,
+      name: `${cpt.label} (${cpt.postType}) - frontend`,
+      expectation: `Browse, view, and interact with ${cpt.label} entries on the frontend at extreme scale`,
+    });
+  }
+  for (const sc of features.shortcodes) {
+    dailyUse.features.push({
+      id: `shortcode-${safeId(sc.tag)}`,
+      name: `Shortcode [${sc.tag}]`,
+      expectation:
+        'Renders cleanly on a page, handles empty / large data gracefully, mobile-correct',
+    });
+  }
+  for (const blk of features.blocks) {
+    dailyUse.features.push({
+      id: `block-frontend-${safeId(blk.name)}`,
+      name: `Block (frontend): ${blk.title}`,
+      expectation:
+        'Renders cleanly on a page; matches editor preview; handles attribute combinations',
+    });
+  }
+  if (dailyUse.features.length > 0) {
+    journeys.push(dailyUse);
+  }
+
+  /* Journey 3: Admin / management */
+  const admin: Journey = {
+    id: 'admin',
+    name: 'Admin / management',
+    perspective: 'Site owner managing the plugin from wp-admin',
+    features: [],
+  };
+  for (const page of features.adminPages) {
+    if (page === setupPage) {
+      continue;
+    }
+    admin.features.push({
+      id: `admin-page-${safeId(page.slug)}`,
+      name: `Admin page: ${page.title}`,
+      expectation:
+        'Page loads without errors; controls are clear; bulk actions where appropriate; help / empty states present',
+    });
+  }
+  for (const cpt of features.cpts) {
+    admin.features.push({
+      id: `cpt-admin-${safeId(cpt.postType)}`,
+      name: `CPT admin: ${cpt.label} (${cpt.postType})`,
+      expectation:
+        'List, create, edit, delete; bulk actions; inline edit; filters; quick search',
+    });
+  }
+  for (const blk of features.blocks) {
+    admin.features.push({
+      id: `block-editor-${safeId(blk.name)}`,
+      name: `Block (editor): ${blk.title}`,
+      expectation:
+        'Inserts cleanly; attributes save; preview matches frontend; sidebar controls work',
+    });
+  }
+  if (features.cronJobs.length > 0) {
+    admin.features.push({
+      id: 'cron-jobs',
+      name: `Cron / scheduled tasks (${features.cronJobs.length})`,
+      expectation:
+        'Tasks register; admin can see what runs and when; failures are surfaced',
+    });
+  }
+  if (features.cliCommands.length > 0) {
+    admin.features.push({
+      id: 'cli-commands',
+      name: `WP-CLI commands (${features.cliCommands.length})`,
+      expectation:
+        'Commands self-document via `wp help`; primary flows reachable from CLI',
+    });
+  }
+  if (features.widgets.length > 0) {
+    admin.features.push({
+      id: 'widgets',
+      name: `Widgets (${features.widgets.length})`,
+      expectation:
+        'Each widget has clear settings, sane defaults, and renders without errors',
+    });
+  }
+  if (features.metaBoxes.length > 0) {
+    admin.features.push({
+      id: 'meta-boxes',
+      name: `Meta boxes (${features.metaBoxes.length})`,
+      expectation:
+        'Meta boxes save, validate, and round-trip; visible only on intended screens',
+    });
+  }
+  if (admin.features.length > 0) {
+    journeys.push(admin);
+  }
+
+  /* Journey 4: API contract (for app / integration consumers) */
+  const apiNamespaces = new Map<string, number>();
+  for (const route of features.restRoutes) {
+    apiNamespaces.set(
+      route.namespace,
+      (apiNamespaces.get(route.namespace) ?? 0) + 1,
+    );
+  }
+  if (apiNamespaces.size > 0 || features.ajaxHandlers.length > 0) {
+    const api: Journey = {
+      id: 'api-contract',
+      name: 'API contract (app / integration consumers)',
+      perspective:
+        'External app, mobile client, or third-party tool calling the plugin via REST',
+      features: [],
+    };
+    for (const [ns, count] of apiNamespaces) {
+      api.features.push({
+        id: `rest-${safeId(ns)}`,
+        name: `REST namespace ${ns} (${count} routes)`,
+        expectation:
+          'Full CRUD coverage where appropriate; documented payload + response shapes; sane permission_callback per route',
+      });
+    }
+    if (features.ajaxHandlers.length > 0) {
+      api.features.push({
+        id: 'ajax-handlers',
+        name: `AJAX handlers (${features.ajaxHandlers.length})`,
+        expectation:
+          'Frontend AJAX should be migrated to REST per the frontend-REST-only rule. Admin-only AJAX may stay.',
+      });
+    }
+    journeys.push(api);
+  }
+
+  /* Journey 5: Integrations */
+  if (features.integrations.length > 0) {
+    const integ: Journey = {
+      id: 'integrations',
+      name: 'Integrations',
+      perspective: 'Site owner enabling third-party integrations',
+      features: features.integrations.map((i) => ({
+        id: `integration-${safeId(i.type)}`,
+        name: `${i.type} integration`,
+        expectation: `Auto-detects ${i.type} via class_exists / function_exists; sane defaults; customer doc matches code; no fatal when third-party is deactivated`,
+      })),
+    };
+    journeys.push(integ);
+  }
+
+  /* Cross-cutting: data integrity */
+  if (features.dbTables.length > 0) {
+    journeys.push({
+      id: 'data-integrity',
+      name: 'Data integrity',
+      perspective:
+        'Plugin data at extreme scale, on schema upgrade, and on uninstall',
+      features: [
+        {
+          id: 'extreme-scale-reads',
+          name: `Extreme-scale reads on ${features.dbTables.length} custom tables`,
+          expectation:
+            'Every list query has LIMIT or cursor pagination; no all-rows reads on the customer path',
+        },
+        {
+          id: 'uninstall-cleanup',
+          name: 'Uninstall cleanup',
+          expectation:
+            'uninstall.php removes all custom tables, options, capabilities, cron events',
+        },
+        {
+          id: 'schema-migrations',
+          name: 'Schema migrations',
+          expectation:
+            'dbDelta migrations are idempotent; version bump triggers them; failures surface to admin',
+        },
+      ],
+    });
+  }
+
+  return {
+    product_name: manifest.header.name || path.basename(manifest.pluginPath),
+    description: `Auto-discovered from plugin manifest scanned at ${manifest.scannedAt}. Review the journey list below: rename product_name, refine feature expectations to match your customer language, drop any surface that is not customer-facing, add anything the scanner missed. The audit method is plugin-agnostic; this list is the contract.`,
+    lenses: DEFAULT_LENSES,
+    severity_rubric: DEFAULT_SEVERITY_RUBRIC,
+    journeys,
+  };
+}
+
 export function initJourneys(args: {
   plugin_path: string;
   force?: boolean;
-}): { created: boolean; path: string; preview: string } {
+  starter_only?: boolean;
+}): {
+  created: boolean;
+  path: string;
+  source: 'auto-discovery' | 'starter' | 'preserved';
+  surfaces_discovered?: number;
+  preview: string;
+} {
   const target = path.join(args.plugin_path, JOURNEYS_RELPATH);
   const dir = path.dirname(target);
   if (fs.existsSync(target) && !args.force) {
     return {
       created: false,
       path: target,
+      source: 'preserved',
       preview:
-        'File already exists. Pass `force: true` to overwrite, or edit the existing file directly.',
+        'File already exists. Pass `force: true` to overwrite, or edit the existing file directly. Use wppqa_audit_coverage_check to compare the existing journeys against the current code manifest.',
     };
   }
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const json = JSON.stringify(STARTER_JOURNEYS, null, 2) + '\n';
+
+  let payload: JourneysFile;
+  let source: 'auto-discovery' | 'starter';
+  let surfacesDiscovered: number | undefined;
+
+  if (args.starter_only) {
+    payload = STARTER_JOURNEYS;
+    source = 'starter';
+  } else {
+    try {
+      const manifest = scanPlugin(args.plugin_path);
+      payload = autoDiscoverJourneys(manifest);
+      surfacesDiscovered = payload.journeys.reduce(
+        (acc, j) => acc + j.features.length,
+        0,
+      );
+      source = 'auto-discovery';
+    } catch (e) {
+      // Scanner failed (probably not a WP plugin path); fall back to starter.
+      payload = STARTER_JOURNEYS;
+      source = 'starter';
+    }
+  }
+
+  const json = JSON.stringify(payload, null, 2) + '\n';
   fs.writeFileSync(target, json, 'utf8');
+
+  const preview =
+    source === 'auto-discovery'
+      ? `Auto-discovered ${surfacesDiscovered} customer-facing surfaces from the plugin manifest, organised into ${payload.journeys.length} customer journeys. Review the file: rename product_name, refine feature expectations in your customer language, drop any non-customer-facing surface, add anything the scanner missed (the wppqa_audit_coverage_check tool surfaces gaps). Then call wppqa_audit_get_briefing to dispatch the per-journey audit.`
+      : `Starter journeys.json scaffolded. Edit it to match your plugin: rename product_name, replace placeholder features with real customer-facing surfaces, add or remove journeys as needed. Then call wppqa_audit_get_briefing to dispatch the per-journey audit.`;
+
   return {
     created: true,
     path: target,
-    preview:
-      'Starter journeys.json scaffolded. Edit it to match your plugin: rename product_name, replace the placeholder features under each journey with real customer-facing surfaces, add or remove journeys as needed. Then call wppqa_audit_get_briefing to generate the per-journey Sonnet sub-agent prompts.',
+    source,
+    surfaces_discovered: surfacesDiscovered,
+    preview,
   };
 }
 
@@ -380,7 +680,164 @@ export function getBriefing(args: BriefingArgs): {
 }
 
 /* ─────────────────────────────────────────────────────────────── */
-/* Tool 3: consolidate matrix                                       */
+/* Tool 3: coverage check                                           */
+/* ─────────────────────────────────────────────────────────────── */
+
+export interface CoverageReport {
+  total_manifest_surfaces: number;
+  covered: number;
+  coverage_percent: number;
+  missing: Array<{ surface_kind: string; identifier: string; suggestion: string }>;
+}
+
+export function coverageCheck(args: {
+  plugin_path: string;
+}): CoverageReport {
+  const product = loadJourneys(args.plugin_path);
+  const manifest = scanPlugin(args.plugin_path);
+
+  // Build a haystack of every identifier the journeys.json mentions
+  // (feature.id + feature.name lowercased). The check is a substring
+  // match against the manifest identifier so the human-edited file does
+  // not have to use the same exact ids the auto-discoverer would have.
+  const haystack = product.journeys
+    .flatMap((j) =>
+      j.features.flatMap((f) => [f.id.toLowerCase(), f.name.toLowerCase()]),
+    )
+    .join('\n');
+
+  // Group-level coverage: if the journeys file has a feature with a
+  // name like "AJAX handlers (36)" or "Cron / scheduled tasks", that
+  // feature blanket-covers every individual surface of that kind. This
+  // lets a journeys.json keep one summary feature per kind instead of
+  // enumerating dozens of internal handler names.
+  const blanketKinds = new Set<string>();
+  if (/ajax\s*handler/i.test(haystack)) blanketKinds.add('ajax');
+  if (/cron|scheduled\s*task/i.test(haystack)) blanketKinds.add('cron');
+  if (/cli\s*command|wp-cli/i.test(haystack)) blanketKinds.add('cli');
+  if (/db\s*table|database\s*table|custom\s*table/i.test(haystack)) blanketKinds.add('db');
+
+  const matches = (needle: string): boolean =>
+    haystack.includes(needle.toLowerCase());
+
+  const missing: CoverageReport['missing'] = [];
+  let total = 0;
+
+  for (const cpt of manifest.features.cpts) {
+    total++;
+    if (!matches(cpt.postType) && !matches(cpt.label)) {
+      missing.push({
+        surface_kind: 'CPT',
+        identifier: `${cpt.postType} (${cpt.label})`,
+        suggestion: `Add a feature to the daily-use or admin journey covering "${cpt.label}" interactions`,
+      });
+    }
+  }
+  for (const sc of manifest.features.shortcodes) {
+    total++;
+    if (!matches(sc.tag)) {
+      missing.push({
+        surface_kind: 'shortcode',
+        identifier: `[${sc.tag}]`,
+        suggestion: `Add a feature to the daily-use journey covering the [${sc.tag}] shortcode`,
+      });
+    }
+  }
+  for (const blk of manifest.features.blocks) {
+    total++;
+    if (!matches(blk.name) && !matches(blk.title)) {
+      missing.push({
+        surface_kind: 'block',
+        identifier: `${blk.title} (${blk.name})`,
+        suggestion: `Add features to daily-use (frontend render) and admin (editor insert) journeys for the "${blk.title}" block`,
+      });
+    }
+  }
+  for (const route of manifest.features.restRoutes) {
+    total++;
+    if (!matches(route.namespace)) {
+      missing.push({
+        surface_kind: 'REST namespace',
+        identifier: route.namespace,
+        suggestion: `Add a feature to the api-contract journey covering the ${route.namespace} REST namespace`,
+      });
+    }
+  }
+  for (const ajax of manifest.features.ajaxHandlers) {
+    total++;
+    if (!matches(ajax.action) && !blanketKinds.has('ajax')) {
+      missing.push({
+        surface_kind: 'AJAX handler',
+        identifier: ajax.action,
+        suggestion: `Document this AJAX action in the api-contract journey, and flag it for migration to REST if frontend-callable`,
+      });
+    }
+  }
+  for (const page of manifest.features.adminPages) {
+    total++;
+    if (!matches(page.slug) && !matches(page.title)) {
+      missing.push({
+        surface_kind: 'admin page',
+        identifier: `${page.slug} (${page.title})`,
+        suggestion: `Add a feature to the admin journey covering the "${page.title}" admin page`,
+      });
+    }
+  }
+  for (const cron of manifest.features.cronJobs) {
+    total++;
+    if (!matches(cron.hook) && !blanketKinds.has('cron')) {
+      missing.push({
+        surface_kind: 'cron job',
+        identifier: cron.hook,
+        suggestion: `Document the ${cron.hook} cron event in the admin journey`,
+      });
+    }
+  }
+  for (const cli of manifest.features.cliCommands) {
+    total++;
+    if (!matches(cli.command) && !blanketKinds.has('cli')) {
+      missing.push({
+        surface_kind: 'CLI command',
+        identifier: cli.command,
+        suggestion: `Document the wp ${cli.command} CLI command in the admin journey`,
+      });
+    }
+  }
+  for (const tbl of manifest.features.dbTables) {
+    total++;
+    if (!matches(tbl.tableSuffix) && !blanketKinds.has('db')) {
+      missing.push({
+        surface_kind: 'DB table',
+        identifier: tbl.tableSuffix,
+        suggestion: `Add the ${tbl.tableSuffix} custom table to the data-integrity journey (extreme-scale reads + uninstall cleanup)`,
+      });
+    }
+  }
+  for (const integ of manifest.features.integrations) {
+    total++;
+    if (!matches(integ.type)) {
+      missing.push({
+        surface_kind: 'integration',
+        identifier: integ.type,
+        suggestion: `Add the ${integ.type} integration to the integrations journey`,
+      });
+    }
+  }
+
+  const covered = total - missing.length;
+  const coverage_percent =
+    total > 0 ? Math.round((covered * 100) / total) : 100;
+
+  return {
+    total_manifest_surfaces: total,
+    covered,
+    coverage_percent,
+    missing,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/* Tool 4: consolidate matrix                                       */
 /* ─────────────────────────────────────────────────────────────── */
 
 interface ParsedReport {
