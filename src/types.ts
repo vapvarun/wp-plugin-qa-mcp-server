@@ -326,7 +326,8 @@ export type TestCategory =
   | 'visual-regression'
   | 'enum-consistency'
   | 'rest-js-contract'
-  | 'editor-layout-bias';
+  | 'editor-layout-bias'
+  | 'template-contract';
 
 export interface TestItem {
   id: string;

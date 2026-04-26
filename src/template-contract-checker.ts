@@ -74,7 +74,7 @@ export function checkTemplateContracts(pluginPath: string): CheckerResult {
   const templatesDir = join(pluginPath, 'templates');
   if (!dirExists(templatesDir)) {
     return {
-      category: 'template-contract' as any,
+      category: 'template-contract',
       issues: [],
       passed: 0,
       failed: 0,
@@ -86,7 +86,7 @@ export function checkTemplateContracts(pluginPath: string): CheckerResult {
   const loaderCalls = findLoaderCalls(pluginPath);
   if (loaderCalls.length === 0) {
     return {
-      category: 'template-contract' as any,
+      category: 'template-contract',
       issues: [],
       passed: 0,
       failed: 0,
@@ -133,7 +133,7 @@ export function checkTemplateContracts(pluginPath: string): CheckerResult {
 
       issues.push({
         id: generateTestId('template-contract'),
-        category: 'template-contract' as any,
+        category: 'template-contract',
         severity: 'high',
         type: 'error',
         title: `Template reads $${varName} but no loader passes it`,
@@ -153,7 +153,7 @@ export function checkTemplateContracts(pluginPath: string): CheckerResult {
 
   const failed = issues.length;
   return {
-    category: 'template-contract' as any,
+    category: 'template-contract',
     issues,
     passed: Math.max(0, checked - failed),
     failed,

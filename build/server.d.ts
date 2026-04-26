@@ -1,5 +1,5 @@
 /**
- * WP Plugin QA MCP Server - Main Server (v2.1.0)
+ * WP Plugin QA MCP Server - Main Server (v3.1.0)
  * 15 tools focused on product evaluation.
  * Code quality checks are handled by WPCS MCP + Plugin Check PCP.
  * Note: No shell commands used. All checks are static analysis or HTTP-based.

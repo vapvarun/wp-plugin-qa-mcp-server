@@ -40,7 +40,7 @@ export function checkAccessibility(pluginPath: string): CheckerResult {
   const totalChecks = 7;
 
   return {
-    category: 'a11y' as any,
+    category: 'a11y',
     issues,
     passed: Math.max(0, totalChecks - errors),
     failed: errors,
@@ -224,7 +224,7 @@ function checkFormLabels(pluginPath: string, phpFiles: string[]): CheckerIssue[]
   if (unlabeled > 0) {
     issues.push({
       id: generateTestId('a11y'),
-      category: 'a11y' as any,
+      category: 'a11y',
       severity: 'high',
       type: 'error',
       title: `${unlabeled} form inputs without labels`,
@@ -302,7 +302,7 @@ function checkImageAlts(pluginPath: string, phpFiles: string[]): CheckerIssue[] 
   if (missing > 0) {
     issues.push({
       id: generateTestId('a11y'),
-      category: 'a11y' as any,
+      category: 'a11y',
       severity: 'high',
       type: 'error',
       title: `${missing} images without alt attribute`,
@@ -340,7 +340,7 @@ function checkAriaUsage(pluginPath: string, phpFiles: string[]): CheckerIssue[] 
 
       issues.push({
         id: generateTestId('a11y'),
-        category: 'a11y' as any,
+        category: 'a11y',
         severity: 'high',
         type: 'error',
         title: 'aria-hidden="true" on focusable element',
@@ -358,7 +358,7 @@ function checkAriaUsage(pluginPath: string, phpFiles: string[]): CheckerIssue[] 
       if (/\btabindex\s*=/i.test(tag.full)) continue;
       issues.push({
         id: generateTestId('a11y'),
-        category: 'a11y' as any,
+        category: 'a11y',
         severity: 'medium',
         type: 'warning',
         title: 'role="button" without tabindex',
@@ -375,7 +375,7 @@ function checkAriaUsage(pluginPath: string, phpFiles: string[]): CheckerIssue[] 
       if (/\brole\s*=\s*["']button["']/i.test(tag.full)) {
         issues.push({
           id: generateTestId('a11y'),
-          category: 'a11y' as any,
+          category: 'a11y',
           severity: 'low',
           type: 'info',
           title: 'Redundant role="button" on <button>',
@@ -391,7 +391,7 @@ function checkAriaUsage(pluginPath: string, phpFiles: string[]): CheckerIssue[] 
     for (const em of content.matchAll(emptyAriaRe)) {
       issues.push({
         id: generateTestId('a11y'),
-        category: 'a11y' as any,
+        category: 'a11y',
         severity: 'medium',
         type: 'warning',
         title: 'Empty aria-label attribute',
@@ -435,7 +435,7 @@ function checkFocusManagement(pluginPath: string, jsFiles: string[]): CheckerIss
 
         issues.push({
           id: generateTestId('a11y'),
-          category: 'a11y' as any,
+          category: 'a11y',
           severity: 'medium',
           type: 'warning',
           title: 'Click handler without keyboard alternative',
@@ -481,7 +481,7 @@ function checkColorContrast(pluginPath: string, cssFiles: string[]): CheckerIssu
 
       issues.push({
         id: generateTestId('a11y'),
-        category: 'a11y' as any,
+        category: 'a11y',
         severity: 'high',
         type: 'error',
         title: 'outline:none without :focus-visible replacement',
@@ -509,7 +509,7 @@ function checkKeyboardNav(pluginPath: string, phpFiles: string[], _jsFiles: stri
       if (value > 0) {
         issues.push({
           id: generateTestId('a11y'),
-          category: 'a11y' as any,
+          category: 'a11y',
           severity: 'medium',
           type: 'warning',
           title: `Positive tabindex (${value})`,
@@ -568,7 +568,7 @@ function checkScreenReaderText(pluginPath: string, phpFiles: string[]): CheckerI
   if (iconOnly > 0) {
     issues.push({
       id: generateTestId('a11y'),
-      category: 'a11y' as any,
+      category: 'a11y',
       severity: 'high',
       type: 'error',
       title: `${iconOnly} icon-only buttons/links without accessible names`,

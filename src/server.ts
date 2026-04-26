@@ -1,5 +1,5 @@
 /**
- * WP Plugin QA MCP Server - Main Server (v2.1.0)
+ * WP Plugin QA MCP Server - Main Server (v3.1.0)
  * 15 tools focused on product evaluation.
  * Code quality checks are handled by WPCS MCP + Plugin Check PCP.
  * Note: No shell commands used. All checks are static analysis or HTTP-based.
@@ -25,7 +25,7 @@ import { checkAccessibility } from './a11y-checker.js';
 import { evaluateAdmin } from './admin-evaluator.js';
 import { evaluateFrontend } from './frontend-evaluator.js';
 import { evaluateMarketing } from './marketing-evaluator.js';
-import { buildReport, formatReport, exportJson, exportSarif, exportJunit, buildAuditReport, formatAuditReport } from './report-builder.js';
+import { buildReport, exportSarif, exportJunit, buildAuditReport, formatAuditReport } from './report-builder.js';
 import { analyzeCompetitors, formatCompetitiveReport } from './competitive-analyzer.js';
 import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
 import { analyzeExpectations, formatCategoryAnalysis } from './category-expectations.js';
@@ -59,7 +59,7 @@ export class WpPluginQaServer {
     this.server = new Server(
       {
         name: 'wp-plugin-qa-mcp-server',
-        version: '2.1.0',
+        version: '3.1.0',
       },
       {
         capabilities: {
@@ -424,6 +424,19 @@ export class WpPluginQaServer {
     if (format === 'json') {
       return this.successResult(JSON.stringify({ audit: auditReport, customerExpectations: categoryResult, codeQuality: codeResults }, null, 2));
     }
+    if (format === 'sarif' || format === 'junit') {
+      // Build a QaReport over every code-quality issue, then export it
+      // in the requested format. SARIF targets GitHub Code Scanning and
+      // VS Code's SARIF viewer; JUnit targets CI consumption.
+      const qaReport = buildReport(
+        manifest.header.name,
+        manifest.header.version,
+        codeResults,
+      );
+      return this.successResult(
+        format === 'sarif' ? exportSarif(qaReport) : exportJunit(qaReport),
+      );
+    }
 
     let output = `FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
 
@@ -613,14 +626,38 @@ export class WpPluginQaServer {
 
   private handleCheckCodeQuality(pluginPath: string, check: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    if (!check) return this.errorResult('check is required (phpcs, phpstan, eslint, stylelint, phpcompat, a11y-grep)');
-
-    const validChecks = ['phpcs', 'phpstan', 'eslint', 'stylelint', 'phpcompat', 'a11y-grep'];
-    if (!validChecks.includes(check)) {
-      return this.errorResult(`Invalid check: ${check}. Must be one of: ${validChecks.join(', ')}`);
+    if (!check) {
+      return this.errorResult(
+        'check is required (one of: phpcs, phpstan, eslint, stylelint, phpcompat, a11y-grep, php-lint, composer-audit, i18n, plugin-check, bundle-size, security-scan, performance-scan, pcp-deep)',
+      );
     }
 
-    const result = runSingleCheck(pluginPath, check as 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep');
+    // Keep this list in lockstep with CodeCheckType in code-quality-checker.ts
+    // and the `check` enum in tools.ts. The previous version was stale and
+    // rejected 8 of the 14 advertised checks.
+    const validChecks = [
+      'phpcs',
+      'phpstan',
+      'eslint',
+      'stylelint',
+      'phpcompat',
+      'a11y-grep',
+      'php-lint',
+      'composer-audit',
+      'i18n',
+      'plugin-check',
+      'bundle-size',
+      'security-scan',
+      'performance-scan',
+      'pcp-deep',
+    ] as const;
+    if (!validChecks.includes(check as (typeof validChecks)[number])) {
+      return this.errorResult(
+        `Invalid check: ${check}. Must be one of: ${validChecks.join(', ')}`,
+      );
+    }
+
+    const result = runSingleCheck(pluginPath, check as (typeof validChecks)[number]);
     return this.formatCheckerResult(result);
   }
 
@@ -814,6 +851,6 @@ export class WpPluginQaServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('WP Plugin QA MCP Server v2.1.0 running on stdio');
+    console.error('WP Plugin QA MCP Server v3.1.0 running on stdio');
   }
 }

@@ -259,6 +259,13 @@ function autoDiscoverJourneys(manifest: PluginManifest): JourneysFile {
       expectation: `Browse, view, and interact with ${cpt.label} entries on the frontend at extreme scale`,
     });
   }
+  for (const tax of features.taxonomies) {
+    dailyUse.features.push({
+      id: `taxonomy-${safeId(tax.taxonomy)}`,
+      name: `Taxonomy: ${tax.label} (${tax.taxonomy})`,
+      expectation: `Term archive renders cleanly, term filter on CPT listing works, term assignment in editor saves`,
+    });
+  }
   for (const sc of features.shortcodes) {
     dailyUse.features.push({
       id: `shortcode-${safeId(sc.tag)}`,
@@ -467,6 +474,7 @@ export function initJourneys(args: {
   let payload: JourneysFile;
   let source: 'auto-discovery' | 'starter';
   let surfacesDiscovered: number | undefined;
+  let scanError: string | undefined;
 
   if (args.starter_only) {
     payload = STARTER_JOURNEYS;
@@ -481,7 +489,10 @@ export function initJourneys(args: {
       );
       source = 'auto-discovery';
     } catch (e) {
-      // Scanner failed (probably not a WP plugin path); fall back to starter.
+      // Scanner failed - the path is probably not a WP plugin or a
+      // file is unreadable. Surface the error message so the user
+      // knows auto-discovery did not silently produce the starter.
+      scanError = e instanceof Error ? e.message : String(e);
       payload = STARTER_JOURNEYS;
       source = 'starter';
     }
@@ -493,7 +504,9 @@ export function initJourneys(args: {
   const preview =
     source === 'auto-discovery'
       ? `Auto-discovered ${surfacesDiscovered} customer-facing surfaces from the plugin manifest, organised into ${payload.journeys.length} customer journeys. Review the file: rename product_name, refine feature expectations in your customer language, drop any non-customer-facing surface, add anything the scanner missed (the wppqa_audit_coverage_check tool surfaces gaps). Then call wppqa_audit_get_briefing to dispatch the per-journey audit.`
-      : `Starter journeys.json scaffolded. Edit it to match your plugin: rename product_name, replace placeholder features with real customer-facing surfaces, add or remove journeys as needed. Then call wppqa_audit_get_briefing to dispatch the per-journey audit.`;
+      : scanError
+        ? `Auto-discovery failed (${scanError}); falling back to the generic starter skeleton. Edit journeys.json to match your plugin, or fix the scanner error and re-run with force: true.`
+        : `Starter journeys.json scaffolded. Edit it to match your plugin: rename product_name, replace placeholder features with real customer-facing surfaces, add or remove journeys as needed. Then call wppqa_audit_get_briefing to dispatch the per-journey audit.`;
 
   return {
     created: true,
@@ -753,13 +766,33 @@ export function coverageCheck(args: {
       });
     }
   }
-  for (const route of manifest.features.restRoutes) {
+  // REST routes are checked at namespace level: a plugin can have 50
+  // routes in one namespace and the journeys file should mention the
+  // namespace once. Counting per-route would deflate coverage_percent
+  // for REST-heavy plugins for no useful reason.
+  const restNamespaces = Array.from(
+    new Set(manifest.features.restRoutes.map((r) => r.namespace)),
+  );
+  for (const ns of restNamespaces) {
     total++;
-    if (!matches(route.namespace)) {
+    if (!matches(ns)) {
       missing.push({
         surface_kind: 'REST namespace',
-        identifier: route.namespace,
-        suggestion: `Add a feature to the api-contract journey covering the ${route.namespace} REST namespace`,
+        identifier: ns,
+        suggestion: `Add a feature to the api-contract journey covering the ${ns} REST namespace`,
+      });
+    }
+  }
+  // Taxonomies are first-class customer-facing surfaces (term archives,
+  // taxonomy filters); they must be covered by a journey feature when
+  // the plugin registers them.
+  for (const tax of manifest.features.taxonomies) {
+    total++;
+    if (!matches(tax.taxonomy) && !matches(tax.label)) {
+      missing.push({
+        surface_kind: 'taxonomy',
+        identifier: `${tax.taxonomy} (${tax.label})`,
+        suggestion: `Add a feature to the daily-use or admin journey covering "${tax.label}" terms (browse, filter, edit)`,
       });
     }
   }
@@ -872,10 +905,26 @@ function findSeverityColumn(headerCells: string[]): number {
 }
 
 function parseReport(filePath: string): ParsedReport {
-  const text = fs.readFileSync(filePath, 'utf8');
   const journeyId = path.basename(filePath, '.md');
+  let text: string;
+  try {
+    text = fs.readFileSync(filePath, 'utf8');
+  } catch (e) {
+    // Sub-agent did not produce the report (most often: it crashed before
+    // writing or the path was wrong). Return a sentinel record so the
+    // consolidation step continues and surfaces the gap rather than
+    // crashing the whole tool with an opaque ENOENT.
+    return {
+      journey_id: journeyId,
+      journey_name: `MISSING: ${filePath} (${(e as Error).message})`,
+      red: [],
+      yellow: [],
+      green: [],
+      skipped: [],
+    };
+  }
   const journeyName =
-    text.match(/^#\s+(.+?)\s+audit/im)?.[1] ?? journeyId;
+    text.match(/^#\s+(.+)\s+audit/im)?.[1]?.trim() ?? journeyId;
 
   const red: ParsedReport['red'] = [];
   const yellow: ParsedReport['yellow'] = [];
@@ -906,6 +955,8 @@ function parseReport(filePath: string): ParsedReport {
     if (!isTableRow) {
       inTable = false;
       severityCol = -1;
+      featureCol = -1;
+      gapCol = -1;
       continue;
     }
 

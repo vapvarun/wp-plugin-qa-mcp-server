@@ -69,7 +69,13 @@ export function runSingleCheck(pluginPath, check) {
         case 'security-scan': return runSecurityScan(pluginPath);
         case 'performance-scan': return runPerformanceScan(pluginPath);
         case 'pcp-deep': return runPcpDeep(pluginPath);
-        default: return skipResult('unknown', `Unknown check: ${check}`);
+        default: {
+            // Exhaustive check: every CodeCheckType is a TestCategory, so this
+            // branch is unreachable. Surface a clear error if a new check is
+            // added without a case.
+            const exhaustive = check;
+            return skipResult('phpcs', `Unknown check: ${String(exhaustive)}`);
+        }
     }
 }
 // ─── PHPCS ──────────────────────────────────────────────────────

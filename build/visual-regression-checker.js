@@ -76,10 +76,12 @@ export function checkVisualRegression(opts) {
             duration: Date.now() - startTime,
         };
     }
-    const prefix = detectCssPrefix(pluginPath);
+    // Scan once and reuse for both prefix detection and admin URL discovery.
+    const manifest = scanPlugin(pluginPath);
+    const prefix = manifest.cssPrefix;
     const urls = manualUrls && manualUrls.length > 0
         ? manualUrls.map((u) => toAdminUrl(u, siteUrl))
-        : discoverAdminUrls(pluginPath, siteUrl);
+        : discoverAdminUrlsFromManifest(manifest, siteUrl);
     if (urls.length === 0) {
         issues.push({
             id: generateTestId('visual-regression'),
@@ -185,23 +187,11 @@ export function checkVisualRegression(opts) {
  * Mirrors the detection in ux-guidelines-checker.ts so both checkers agree.
  */
 /**
- * Plugin-agnostic CSS prefix detection. Delegates to the canonical scanner
- * implementation (`scanPlugin().cssPrefix`) which reads asset CSS files,
- * frequency-counts `--<token>-*` custom properties, and falls back to the
- * plugin slug. Replaces the previous local implementation that hard-coded
- * `'lrn'` as the fallback.
+ * Discover admin URLs from a pre-loaded PluginManifest. The caller passes
+ * the manifest in so checkVisualRegression scans once per invocation
+ * instead of twice (once for the prefix, once here).
  */
-function detectCssPrefix(pluginPath) {
-    return scanPlugin(pluginPath).cssPrefix;
-}
-/**
- * Discover admin URLs from the canonical PluginManifest. The scanner
- * already extracts every add_submenu_page / add_menu_page registration
- * with file + line attribution; this used to re-walk the PHP tree on
- * every visual-regression run.
- */
-function discoverAdminUrls(pluginPath, siteUrl) {
-    const manifest = scanPlugin(pluginPath);
+function discoverAdminUrlsFromManifest(manifest, siteUrl) {
     const base = siteUrl.replace(/\/$/, '');
     const seen = new Set();
     const urls = [];

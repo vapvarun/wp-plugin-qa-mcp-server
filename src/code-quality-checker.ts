@@ -40,15 +40,15 @@ export function runAllCodeChecks(pluginPath: string): CheckerResult[] {
     results.push(runSecurityScan(pluginPath));
     results.push(runPerformanceScan(pluginPath));
   } else {
-    results.push(skipResult('a11y-grep' as TestCategory, 'Skipped: superseded by phpcs + wppqa_check_a11y — run those instead.'));
-    results.push(skipResult('security-scan' as TestCategory, 'Skipped: superseded by phpcs WordPress.Security.* rules.'));
-    results.push(skipResult('performance-scan' as TestCategory, 'Skipped: superseded by phpcs WordPress.WP.PostsPerPage + WordPress.DB.SlowDBQuery rules.'));
+    results.push(skipResult('a11y-grep', 'Skipped: superseded by phpcs + wppqa_check_a11y — run those instead.'));
+    results.push(skipResult('security-scan', 'Skipped: superseded by phpcs WordPress.Security.* rules.'));
+    results.push(skipResult('performance-scan', 'Skipped: superseded by phpcs WordPress.WP.PostsPerPage + WordPress.DB.SlowDBQuery rules.'));
   }
 
   if (!pluginCheckAvailable) {
     results.push(runPcpDeep(pluginPath));
   } else {
-    results.push(skipResult('pcp-deep' as TestCategory, 'Skipped: superseded by Plugin Check CLI (`plugin-check` task).'));
+    results.push(skipResult('pcp-deep', 'Skipped: superseded by Plugin Check CLI (`plugin-check` task).'));
   }
 
   results.push(runPhpLint(pluginPath));
@@ -79,7 +79,13 @@ export function runSingleCheck(pluginPath: string, check: CodeCheckType): Checke
     case 'security-scan': return runSecurityScan(pluginPath);
     case 'performance-scan': return runPerformanceScan(pluginPath);
     case 'pcp-deep': return runPcpDeep(pluginPath);
-    default: return skipResult('unknown' as TestCategory, `Unknown check: ${check}`);
+    default: {
+      // Exhaustive check: every CodeCheckType is a TestCategory, so this
+      // branch is unreachable. Surface a clear error if a new check is
+      // added without a case.
+      const exhaustive: never = check;
+      return skipResult('phpcs', `Unknown check: ${String(exhaustive)}`);
+    }
   }
 }
 
