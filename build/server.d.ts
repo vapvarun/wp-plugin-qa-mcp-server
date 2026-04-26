@@ -6,6 +6,15 @@
  */
 export declare class WpPluginQaServer {
     private server;
+    /**
+     * Per-request manifest cache. Cleared at the start of every tool
+     * call so a single tool run can reuse one scan across helpers without
+     * leaking stale data into the next call. This eliminates the double-
+     * scan when init_journeys + coverage_check (or any pair of tools)
+     * are called back-to-back on the same plugin.
+     */
+    private manifestCache;
+    private getCachedManifest;
     constructor();
     private setupToolHandlers;
     private handleScanPlugin;

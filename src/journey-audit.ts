@@ -352,6 +352,30 @@ function autoDiscoverJourneys(manifest: PluginManifest): JourneysFile {
         'Meta boxes save, validate, and round-trip; visible only on intended screens',
     });
   }
+  if (features.settings.length > 0) {
+    admin.features.push({
+      id: 'settings',
+      name: `Settings (${features.settings.length} options)`,
+      expectation:
+        'Each option has clear copy, sane default, sanitisation callback, and a working "settings saved" round-trip',
+    });
+  }
+  if (features.customRoles.length > 0) {
+    admin.features.push({
+      id: 'custom-roles',
+      name: `Custom roles (${features.customRoles.length})`,
+      expectation:
+        'Roles register on activation, capabilities gate the right surfaces, removal on uninstall is clean',
+    });
+  }
+  if (features.imageSizes.length > 0) {
+    dailyUse.features.push({
+      id: 'image-sizes',
+      name: `Image sizes (${features.imageSizes.length})`,
+      expectation:
+        'Each registered size renders cleanly in the attachment picker and on the customer-visible surfaces that use it',
+    });
+  }
   if (admin.features.length > 0) {
     journeys.push(admin);
   }
@@ -853,6 +877,55 @@ export function coverageCheck(args: {
         surface_kind: 'integration',
         identifier: integ.type,
         suggestion: `Add the ${integ.type} integration to the integrations journey`,
+      });
+    }
+  }
+  // Settings: customer-facing admin configuration surface.
+  // Blanket-coverage word: "settings" (matches "Plugin settings",
+  // "Settings page", "Admin settings", etc.).
+  const hasSettingsBlanket = /\bsettings\b/i.test(haystack);
+  for (const setting of manifest.features.settings) {
+    total++;
+    if (!matches(setting.optionName) && !hasSettingsBlanket) {
+      missing.push({
+        surface_kind: 'setting',
+        identifier: setting.optionName,
+        suggestion: `Document the ${setting.optionName} option in the admin journey (or add a "Settings" feature to blanket-cover all options)`,
+      });
+    }
+  }
+  // Custom roles + capabilities: customer-facing because they show up
+  // in the Users admin and gate every admin-page capability check.
+  for (const role of manifest.features.customRoles) {
+    total++;
+    if (!matches(role.role)) {
+      missing.push({
+        surface_kind: 'custom role',
+        identifier: role.role,
+        suggestion: `Document the ${role.role} role in the admin journey (capabilities, who gets it, what it gates)`,
+      });
+    }
+  }
+  // Meta boxes: user-facing on the post editor screen.
+  for (const meta of manifest.features.metaBoxes) {
+    total++;
+    if (!matches(meta.id) && !matches(meta.title)) {
+      missing.push({
+        surface_kind: 'meta box',
+        identifier: `${meta.id} (${meta.title})`,
+        suggestion: `Document the "${meta.title}" meta box in the admin journey (which screens, what fields, save round-trip)`,
+      });
+    }
+  }
+  // Image sizes: appear in attachment picker; affect every image
+  // upload flow.
+  for (const size of manifest.features.imageSizes) {
+    total++;
+    if (!matches(size.name)) {
+      missing.push({
+        surface_kind: 'image size',
+        identifier: size.name,
+        suggestion: `Document the ${size.name} image size in the daily-use journey (where it renders, what dimensions / crop)`,
       });
     }
   }

@@ -55,6 +55,25 @@ import { resetIdCounter } from './shared-utils.js';
 export class WpPluginQaServer {
   private server: Server;
 
+  /**
+   * Per-request manifest cache. Cleared at the start of every tool
+   * call so a single tool run can reuse one scan across helpers without
+   * leaking stale data into the next call. This eliminates the double-
+   * scan when init_journeys + coverage_check (or any pair of tools)
+   * are called back-to-back on the same plugin.
+   */
+  private manifestCache = new Map<string, PluginManifest>();
+
+  private getCachedManifest(pluginPath: string): PluginManifest {
+    const cached = this.manifestCache.get(pluginPath);
+    if (cached) {
+      return cached;
+    }
+    const fresh = scanPlugin(pluginPath);
+    this.manifestCache.set(pluginPath, fresh);
+    return fresh;
+  }
+
   constructor() {
     this.server = new Server(
       {
@@ -81,6 +100,7 @@ export class WpPluginQaServer {
       const toolArgs = (args || {}) as Record<string, unknown>;
 
       resetIdCounter();
+      this.manifestCache.clear();
 
       try {
         switch (name) {
@@ -208,14 +228,14 @@ export class WpPluginQaServer {
 
   private handleScanPlugin(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const manifest = scanPlugin(pluginPath);
+    const manifest = this.getCachedManifest(pluginPath);
     return this.successResult(JSON.stringify(manifest, null, 2));
   }
 
   private async handleCheckApi(pluginPath: string, siteUrl: string): Promise<CallToolResult> {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     if (!siteUrl) return this.errorResult('site_url is required');
-    const manifest = scanPlugin(pluginPath);
+    const manifest = this.getCachedManifest(pluginPath);
     const result = await checkApi(manifest, siteUrl);
     return this.formatCheckerResult(result);
   }
@@ -223,7 +243,7 @@ export class WpPluginQaServer {
   private async handleCheckDatabase(pluginPath: string, siteUrl: string): Promise<CallToolResult> {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     if (!siteUrl) return this.errorResult('site_url is required');
-    const manifest = scanPlugin(pluginPath);
+    const manifest = this.getCachedManifest(pluginPath);
     const result = await checkDatabase(manifest, siteUrl);
     return this.formatCheckerResult(result);
   }
@@ -231,7 +251,7 @@ export class WpPluginQaServer {
   private handleCheckBrowser(pluginPath: string, siteUrl: string, mode?: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     if (!siteUrl) return this.errorResult('site_url is required');
-    const manifest = scanPlugin(pluginPath);
+    const manifest = this.getCachedManifest(pluginPath);
     const exportDir = mode === 'export' ? `${pluginPath}/../playwright/generated` : undefined;
     const result = checkBrowser(manifest, siteUrl, { exportDir });
     return this.formatCheckerResult(result);
@@ -328,7 +348,7 @@ export class WpPluginQaServer {
 
   private handleEvaluateProduct(pluginPath: string, focus?: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const manifest = scanPlugin(pluginPath);
+    const manifest = this.getCachedManifest(pluginPath);
     const results: CheckerResult[] = [];
     const area = focus || 'all';
 
@@ -361,7 +381,7 @@ export class WpPluginQaServer {
 
   private async handleAnalyzeMarket(pluginPath: string, searchKeywords?: string): Promise<CallToolResult> {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const manifest = scanPlugin(pluginPath);
+    const manifest = this.getCachedManifest(pluginPath);
 
     // Gap analysis
     const gapResult = analyzeGaps(manifest);
@@ -386,7 +406,7 @@ export class WpPluginQaServer {
     if (!pluginPath) return this.errorResult('plugin_path is required');
 
     // Step 1: Scan plugin
-    const manifest = scanPlugin(pluginPath);
+    const manifest = this.getCachedManifest(pluginPath);
 
     // Step 2: Code quality checks (11 checks)
     const codeResults = runAllCodeChecks(pluginPath);
@@ -484,7 +504,13 @@ export class WpPluginQaServer {
 
   private handleCrossReferenceData(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    const report = crossReferenceData({ pluginPath });
+    // Pass the cached manifest so crossReferenceData does not re-scan
+    // the plugin tree (it accepts a `scanManifestCache` param that was
+    // previously dead code because no caller supplied it).
+    const report = crossReferenceData({
+      pluginPath,
+      scanManifestCache: this.getCachedManifest(pluginPath),
+    });
     return this.successResult(JSON.stringify(report, null, 2));
   }
 
