@@ -43,6 +43,11 @@ import { checkVisualRegression } from './visual-regression-checker.js';
 import { checkEnumConsistency } from './enum-consistency-checker.js';
 import { checkRestJsContract } from './rest-js-contract-checker.js';
 import { checkEditorLayoutBias } from './editor-layout-bias-checker.js';
+import {
+  initJourneys,
+  getBriefing as getAuditBriefing,
+  consolidateMatrix as consolidateAuditMatrix,
+} from './journey-audit.js';
 import type { PluginManifest, CheckerResult } from './types.js';
 import { resetIdCounter } from './shared-utils.js';
 
@@ -165,6 +170,25 @@ export class WpPluginQaServer {
           // 20. Full Audit (master tool)
           case 'wppqa_audit_plugin':
             return await this.handleAuditPlugin(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined, toolArgs.format as string | undefined);
+
+          // 21-23. Journey-by-journey customer-experience audit
+          case 'wppqa_audit_init_journeys':
+            return this.handleAuditInitJourneys(
+              toolArgs.plugin_path as string,
+              toolArgs.force as boolean | undefined,
+            );
+          case 'wppqa_audit_get_briefing':
+            return this.handleAuditGetBriefing(
+              toolArgs.plugin_path as string,
+              toolArgs.site_url as string | undefined,
+              toolArgs.output_dir as string | undefined,
+            );
+          case 'wppqa_audit_consolidate_matrix':
+            return this.handleAuditConsolidateMatrix(
+              toolArgs.plugin_path as string,
+              toolArgs.report_paths as string[],
+              toolArgs.output_path as string,
+            );
 
           default:
             return this.errorResult(`Unknown tool: ${name}`);
@@ -659,6 +683,97 @@ export class WpPluginQaServer {
       content: [{ type: 'text', text: `Error: ${message}` } as TextContent],
       isError: true,
     };
+  }
+
+  /* ─── Journey audit handlers ───────────────────────────── */
+
+  private handleAuditInitJourneys(
+    pluginPath: string,
+    force: boolean | undefined,
+  ): CallToolResult {
+    const result = initJourneys({
+      plugin_path: pluginPath,
+      force: force ?? false,
+    });
+    const lines: string[] = [];
+    lines.push(
+      result.created
+        ? `Created starter journeys.json at ${result.path}.`
+        : `journeys.json already exists at ${result.path}.`,
+    );
+    lines.push('');
+    lines.push(result.preview);
+    lines.push('');
+    lines.push(`JSON: ${JSON.stringify(result)}`);
+    return this.successResult(lines.join('\n'));
+  }
+
+  private handleAuditGetBriefing(
+    pluginPath: string,
+    siteUrl: string | undefined,
+    outputDir: string | undefined,
+  ): CallToolResult {
+    const result = getAuditBriefing({
+      plugin_path: pluginPath,
+      site_url: siteUrl,
+      output_dir: outputDir,
+    });
+    const lines: string[] = [];
+    lines.push(`Product: ${result.product_name}`);
+    lines.push(
+      `Generated ${result.briefings.length} per-journey briefing prompts.`,
+    );
+    lines.push('');
+    lines.push(
+      'Dispatch each prompt to a parallel Sonnet sub-agent (Claude Agent tool with model: "sonnet"). Each sub-agent writes its findings to the output_path. After all complete, call wppqa_audit_consolidate_matrix with the list of output_paths.',
+    );
+    lines.push('');
+    for (const b of result.briefings) {
+      lines.push(`### ${b.journey_name} (\`${b.journey_id}\`)`);
+      lines.push(`Output: \`${b.output_path}\``);
+      lines.push('');
+      lines.push('Prompt:');
+      lines.push('```');
+      lines.push(b.prompt);
+      lines.push('```');
+      lines.push('');
+    }
+    lines.push(result.consolidate_hint);
+    lines.push('');
+    lines.push(`JSON: ${JSON.stringify(result)}`);
+    return this.successResult(lines.join('\n'));
+  }
+
+  private handleAuditConsolidateMatrix(
+    pluginPath: string,
+    reportPaths: string[],
+    outputPath: string,
+  ): CallToolResult {
+    const result = consolidateAuditMatrix({
+      plugin_path: pluginPath,
+      report_paths: reportPaths,
+      output_path: outputPath,
+    });
+    const lines: string[] = [];
+    lines.push(`Consolidated matrix written to ${result.output_path}`);
+    lines.push('');
+    lines.push(
+      `Severity totals: 🔴 ${result.totals.red} | 🟡 ${result.totals.yellow} | 🟢 ${result.totals.green} | ⚪ ${result.totals.skipped} (out of ${result.totals.total} surfaces)`,
+    );
+    lines.push('');
+    if (result.reds.length > 0) {
+      lines.push('Reds:');
+      for (const r of result.reds) {
+        lines.push(`- ${r}`);
+      }
+    } else {
+      lines.push(
+        'No 🔴 findings: plugin matches customer expectation across every audited journey.',
+      );
+    }
+    lines.push('');
+    lines.push(`JSON: ${JSON.stringify(result)}`);
+    return this.successResult(lines.join('\n'));
   }
 
   async run() {

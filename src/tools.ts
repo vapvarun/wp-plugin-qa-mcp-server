@@ -535,4 +535,82 @@ export const tools: Tool[] = [
       required: ['plugin_path'],
     },
   },
+
+  // ─── 21. Journey audit: scaffold journeys.json ────────────────
+  {
+    name: 'wppqa_audit_init_journeys',
+    description:
+      'Scaffold a starter `docs/audit/journeys.json` inside a plugin so the journey-by-journey customer-experience audit can run on it. The starter file contains a generic 4-journey skeleton (first-run / daily-use / admin / integrations) that the plugin team customises by listing the real customer-facing surfaces of their plugin. The audit method is plugin-agnostic; the journey list is plugin-specific. Plugin owns its journeys.json (lives in the plugin tree, versioned alongside the code).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        force: {
+          type: 'boolean',
+          description:
+            'Overwrite an existing journeys.json. Default: false (preserves existing).',
+          default: false,
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── 22. Journey audit: build per-journey briefings ───────────
+  {
+    name: 'wppqa_audit_get_briefing',
+    description:
+      'Read the plugin\'s `docs/audit/journeys.json` and return one Sonnet sub-agent briefing prompt per journey. The caller (Claude) dispatches each briefing to a parallel sub-agent via its own Agent tool. Each briefing tells the sub-agent to walk one customer journey, score every surface against the three-lens method (customer expectation / current reality / long-term fix) on the four-tier severity rubric (🟢 / 🟡 / 🔴 / ⚪), and write the findings to a per-journey markdown file. After all sub-agents finish, call wppqa_audit_consolidate_matrix with the list of output paths.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        site_url: {
+          type: 'string',
+          description:
+            'Optional Local WP site URL for the sub-agents to walk (e.g. http://forums.local). Defaults to http://localhost.',
+        },
+        output_dir: {
+          type: 'string',
+          description:
+            'Optional working directory where per-journey markdown reports will be saved. Defaults to a tmp dir keyed off the plugin name and timestamp.',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
+  // ─── 23. Journey audit: consolidate matrix ────────────────────
+  {
+    name: 'wppqa_audit_consolidate_matrix',
+    description:
+      'Merge the per-journey markdown reports produced by the parallel sub-agents into a single customer-experience matrix. Reads each report\'s summary table, aggregates severity counts, lists every 🔴 sorted by journey, lists 🟡 by journey, lists 🟢, and notes ⚪ skipped surfaces. Writes the matrix to the supplied output_path (typical: <plugin_path>/docs/audit/customer-experience-matrix.md). Returns severity totals plus a list of the red findings for quick triage.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin directory',
+        },
+        report_paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'List of per-journey markdown file paths returned by the sub-agents.',
+        },
+        output_path: {
+          type: 'string',
+          description:
+            'Absolute path where the consolidated matrix will be written. Conventionally <plugin_path>/docs/audit/customer-experience-matrix.md.',
+        },
+      },
+      required: ['plugin_path', 'report_paths', 'output_path'],
+    },
+  },
 ];
