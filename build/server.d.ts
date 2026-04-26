@@ -36,5 +36,9 @@ export declare class WpPluginQaServer {
     private formatCheckerResult;
     private successResult;
     private errorResult;
+    private handleAuditInitJourneys;
+    private handleAuditCoverageCheck;
+    private handleAuditGetBriefing;
+    private handleAuditConsolidateMatrix;
     run(): Promise<void>;
 }

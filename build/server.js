@@ -36,6 +36,7 @@ import { checkVisualRegression } from './visual-regression-checker.js';
 import { checkEnumConsistency } from './enum-consistency-checker.js';
 import { checkRestJsContract } from './rest-js-contract-checker.js';
 import { checkEditorLayoutBias } from './editor-layout-bias-checker.js';
+import { initJourneys, getBriefing as getAuditBriefing, consolidateMatrix as consolidateAuditMatrix, coverageCheck as auditCoverageCheck, } from './journey-audit.js';
 import { resetIdCounter } from './shared-utils.js';
 export class WpPluginQaServer {
     server;
@@ -123,6 +124,15 @@ export class WpPluginQaServer {
                     // 20. Full Audit (master tool)
                     case 'wppqa_audit_plugin':
                         return await this.handleAuditPlugin(toolArgs.plugin_path, toolArgs.site_url, toolArgs.format);
+                    // 21-24. Journey-by-journey customer-experience audit
+                    case 'wppqa_audit_init_journeys':
+                        return this.handleAuditInitJourneys(toolArgs.plugin_path, toolArgs.force, toolArgs.starter_only);
+                    case 'wppqa_audit_coverage_check':
+                        return this.handleAuditCoverageCheck(toolArgs.plugin_path);
+                    case 'wppqa_audit_get_briefing':
+                        return this.handleAuditGetBriefing(toolArgs.plugin_path, toolArgs.site_url, toolArgs.output_dir);
+                    case 'wppqa_audit_consolidate_matrix':
+                        return this.handleAuditConsolidateMatrix(toolArgs.plugin_path, toolArgs.report_paths, toolArgs.output_path);
                     default:
                         return this.errorResult(`Unknown tool: ${name}`);
                 }
@@ -562,6 +572,95 @@ export class WpPluginQaServer {
             content: [{ type: 'text', text: `Error: ${message}` }],
             isError: true,
         };
+    }
+    /* ─── Journey audit handlers ───────────────────────────── */
+    handleAuditInitJourneys(pluginPath, force, starterOnly) {
+        const result = initJourneys({
+            plugin_path: pluginPath,
+            force: force ?? false,
+            starter_only: starterOnly ?? false,
+        });
+        const lines = [];
+        lines.push(result.created
+            ? `Created journeys.json at ${result.path} (source: ${result.source}${typeof result.surfaces_discovered === 'number'
+                ? `, ${result.surfaces_discovered} surfaces`
+                : ''}).`
+            : `journeys.json already exists at ${result.path} (source: ${result.source}).`);
+        lines.push('');
+        lines.push(result.preview);
+        lines.push('');
+        lines.push(`JSON: ${JSON.stringify(result)}`);
+        return this.successResult(lines.join('\n'));
+    }
+    handleAuditCoverageCheck(pluginPath) {
+        const result = auditCoverageCheck({ plugin_path: pluginPath });
+        const lines = [];
+        lines.push(`Coverage: ${result.covered}/${result.total_manifest_surfaces} (${result.coverage_percent}%)`);
+        lines.push('');
+        if (result.missing.length === 0) {
+            lines.push('Every surface in the plugin manifest is referenced in journeys.json. 100% coverage.');
+        }
+        else {
+            lines.push(`Missing ${result.missing.length} surfaces:`);
+            lines.push('');
+            for (const m of result.missing) {
+                lines.push(`- **${m.surface_kind}** \`${m.identifier}\` - ${m.suggestion}`);
+            }
+        }
+        lines.push('');
+        lines.push(`JSON: ${JSON.stringify(result)}`);
+        return this.successResult(lines.join('\n'));
+    }
+    handleAuditGetBriefing(pluginPath, siteUrl, outputDir) {
+        const result = getAuditBriefing({
+            plugin_path: pluginPath,
+            site_url: siteUrl,
+            output_dir: outputDir,
+        });
+        const lines = [];
+        lines.push(`Product: ${result.product_name}`);
+        lines.push(`Generated ${result.briefings.length} per-journey briefing prompts.`);
+        lines.push('');
+        lines.push('Dispatch each prompt to a parallel Sonnet sub-agent (Claude Agent tool with model: "sonnet"). Each sub-agent writes its findings to the output_path. After all complete, call wppqa_audit_consolidate_matrix with the list of output_paths.');
+        lines.push('');
+        for (const b of result.briefings) {
+            lines.push(`### ${b.journey_name} (\`${b.journey_id}\`)`);
+            lines.push(`Output: \`${b.output_path}\``);
+            lines.push('');
+            lines.push('Prompt:');
+            lines.push('```');
+            lines.push(b.prompt);
+            lines.push('```');
+            lines.push('');
+        }
+        lines.push(result.consolidate_hint);
+        lines.push('');
+        lines.push(`JSON: ${JSON.stringify(result)}`);
+        return this.successResult(lines.join('\n'));
+    }
+    handleAuditConsolidateMatrix(pluginPath, reportPaths, outputPath) {
+        const result = consolidateAuditMatrix({
+            plugin_path: pluginPath,
+            report_paths: reportPaths,
+            output_path: outputPath,
+        });
+        const lines = [];
+        lines.push(`Consolidated matrix written to ${result.output_path}`);
+        lines.push('');
+        lines.push(`Severity totals: 🔴 ${result.totals.red} | 🟡 ${result.totals.yellow} | 🟢 ${result.totals.green} | ⚪ ${result.totals.skipped} (out of ${result.totals.total} surfaces)`);
+        lines.push('');
+        if (result.reds.length > 0) {
+            lines.push('Reds:');
+            for (const r of result.reds) {
+                lines.push(`- ${r}`);
+            }
+        }
+        else {
+            lines.push('No 🔴 findings: plugin matches customer expectation across every audited journey.');
+        }
+        lines.push('');
+        lines.push(`JSON: ${JSON.stringify(result)}`);
+        return this.successResult(lines.join('\n'));
     }
     async run() {
         const transport = new StdioServerTransport();
