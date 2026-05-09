@@ -27,6 +27,13 @@ export declare class WpPluginQaServer {
     private handleCheckWiringCompleteness;
     private handleCheckUxGuidelines;
     private handleCheckPluginDevRules;
+    /**
+     * Focused security + code quality audit. Composes the high-signal trust-list
+     * checks (plugin_dev_rules + plugin-check + composer-audit) and optionally
+     * phpcs + phpstan. Filters out noisy heuristics like rest_js_contract and
+     * wiring_completeness. Returns a concise report keyed on severity.
+     */
+    private handleSecurityQualityAudit;
     private handleCheckVisualRegression;
     private handleCheckEnumConsistency;
     private handleCheckRestJsContract;

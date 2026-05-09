@@ -131,6 +131,8 @@ export class WpPluginQaServer {
                         return this.handleCheckUxGuidelines(toolArgs.plugin_path);
                     case 'wppqa_check_plugin_dev_rules':
                         return this.handleCheckPluginDevRules(toolArgs.plugin_path);
+                    case 'wppqa_security_quality_audit':
+                        return this.handleSecurityQualityAudit(toolArgs.plugin_path, toolArgs.severity, toolArgs.strict);
                     case 'wppqa_check_visual_regression':
                         return this.handleCheckVisualRegression(toolArgs.plugin_path, toolArgs.site_url, toolArgs.autologin_param, toolArgs.admin_urls);
                     case 'wppqa_check_enum_consistency':
@@ -230,6 +232,81 @@ export class WpPluginQaServer {
             return this.errorResult('plugin_path is required');
         const result = checkPluginDevRules(pluginPath);
         return this.formatCheckerResult(result);
+    }
+    /**
+     * Focused security + code quality audit. Composes the high-signal trust-list
+     * checks (plugin_dev_rules + plugin-check + composer-audit) and optionally
+     * phpcs + phpstan. Filters out noisy heuristics like rest_js_contract and
+     * wiring_completeness. Returns a concise report keyed on severity.
+     */
+    handleSecurityQualityAudit(pluginPath, severity, strict) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const sevFloor = severity === 'all' ? 'low' : severity === 'medium' ? 'medium' : 'high';
+        const sevRank = { critical: 4, high: 3, medium: 2, low: 1 };
+        const minRank = sevRank[sevFloor] ?? 3;
+        // Run the trust-list subset.
+        const results = [];
+        results.push(checkPluginDevRules(pluginPath));
+        results.push(runSingleCheck(pluginPath, 'plugin-check'));
+        results.push(runSingleCheck(pluginPath, 'composer-audit'));
+        if (strict) {
+            results.push(runSingleCheck(pluginPath, 'phpcs'));
+            results.push(runSingleCheck(pluginPath, 'phpstan'));
+        }
+        // Apply severity floor and tally.
+        let totalErrors = 0;
+        let totalWarnings = 0;
+        const filtered = results.map((r) => {
+            const issues = r.issues.filter((i) => {
+                // Always keep errors regardless of severity floor — they're actionable.
+                if (i.type === 'error') {
+                    totalErrors++;
+                    return true;
+                }
+                const rank = sevRank[i.severity] ?? 0;
+                if (rank >= minRank) {
+                    if (i.type === 'warning')
+                        totalWarnings++;
+                    return true;
+                }
+                return false;
+            });
+            return { ...r, issues };
+        });
+        // Render concise output.
+        let output = `SECURITY + CODE QUALITY AUDIT\n${'='.repeat(60)}\n\n`;
+        output += `Severity floor: ${sevFloor}${strict ? ' (strict: phpcs + phpstan included)' : ''}\n`;
+        output += `Total: ${totalErrors} error${totalErrors === 1 ? '' : 's'}, ${totalWarnings} warning${totalWarnings === 1 ? '' : 's'} above floor\n\n`;
+        for (const r of filtered) {
+            const errCount = r.issues.filter((i) => i.type === 'error').length;
+            const warnCount = r.issues.filter((i) => i.type === 'warning').length;
+            const status = errCount === 0 && warnCount === 0 ? 'PASS' : errCount > 0 ? 'FAIL' : 'WARN';
+            output += `[${status}] ${r.category.toUpperCase().padEnd(20)} ${errCount} errors, ${warnCount} warnings\n`;
+        }
+        output += '\n';
+        for (const r of filtered) {
+            if (r.issues.length === 0)
+                continue;
+            output += `${r.category.toUpperCase()} (${r.issues.length})\n${'-'.repeat(40)}\n`;
+            for (const issue of r.issues) {
+                output += `[${issue.type}/${issue.severity}] ${issue.title}\n`;
+                output += `  ${issue.message}\n`;
+                if (issue.file)
+                    output += `  File: ${issue.file}${issue.line > 0 ? ':' + issue.line : ''}\n`;
+                if (issue.fix)
+                    output += `  Fix: ${issue.fix}\n`;
+                output += '\n';
+            }
+        }
+        // Verdict line — release-readiness check.
+        const verdict = totalErrors === 0
+            ? totalWarnings === 0
+                ? '✅ CLEAN — no findings above severity floor'
+                : `⚠ ${totalWarnings} warning${totalWarnings === 1 ? '' : 's'} above floor — review before shipping`
+            : `❌ ${totalErrors} error${totalErrors === 1 ? '' : 's'} — release blocked`;
+        output += `${'='.repeat(60)}\n${verdict}\n`;
+        return this.successResult(output);
     }
     handleCheckVisualRegression(pluginPath, siteUrl, autologinParam, adminUrls) {
         if (!pluginPath)

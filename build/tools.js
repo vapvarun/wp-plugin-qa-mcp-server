@@ -391,6 +391,36 @@ export const tools = [
             required: ['plugin_path'],
         },
     },
+    // ─── 19a-bis. Focused security + code quality audit ─────────────
+    // The pragmatic alternative to wppqa_audit_plugin (which runs all 11
+    // checks and produces 600KB+ of mixed signal/noise). Only runs the
+    // high-signal subset for "is this safe + is the code good?" — drops
+    // every UX/templates/wiring-completeness/rest-js-contract heuristic
+    // that generates false positives on plugins with non-standard patterns
+    // (Interactivity API, settings via Models, etc.).
+    {
+        name: 'wppqa_security_quality_audit',
+        description: "Focused security + code quality audit. Runs ONLY the high-signal trust-list checks: wppqa_check_plugin_dev_rules (security/UX rules from the wp-plugin-development skill: nonce-without-cap, $_POST iteration, alert/confirm ban, inline onclick, raw -1 inputs, tap targets, breakpoints) + plugin-check (WordPress.org PCP) + composer-audit (vendor vulnerabilities). Default returns ONLY high-severity findings (errors + high warnings); medium/low surfaced only when severity='all'. With strict=true, also runs phpcs and phpstan errors. Output ~10KB instead of wppqa_audit_plugin's 600KB+. Use this for PR gate / pre-release sanity / 'is this plugin safe to ship?'. Use wppqa_audit_plugin only for the broader review (UX, templates, market analysis, etc.) when you actually want all 11 checks.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+                severity: {
+                    type: 'string',
+                    description: "Severity floor for findings. 'high' (default) returns only high-severity warnings + errors. 'medium' adds medium-severity warnings (e.g., breakpoint discipline). 'all' adds low-severity (tap targets, style nits).",
+                    enum: ['high', 'medium', 'all'],
+                },
+                strict: {
+                    type: 'boolean',
+                    description: 'When true, also runs phpcs and phpstan and counts their errors as failures. Default false because pre-commit hooks usually already enforce these locally.',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
     // ─── 19b. Visual-regression check (live site — Playwright) ──────
     {
         name: 'wppqa_check_visual_regression',
