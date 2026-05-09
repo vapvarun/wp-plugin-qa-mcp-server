@@ -32,6 +32,7 @@ import { learnFromBasecamp } from './basecamp-learner.js';
 import { checkWiringCompleteness } from './wiring-completeness-checker.js';
 import { checkUxGuidelines } from './ux-guidelines-checker.js';
 import { checkPluginDevRules } from './plugin-dev-rules-checker.js';
+import { checkQaCoverage } from './qa-coverage-checker.js';
 import { checkVisualRegression } from './visual-regression-checker.js';
 import { checkEnumConsistency } from './enum-consistency-checker.js';
 import { checkRestJsContract } from './rest-js-contract-checker.js';
@@ -133,6 +134,8 @@ export class WpPluginQaServer {
                         return this.handleCheckPluginDevRules(toolArgs.plugin_path);
                     case 'wppqa_security_quality_audit':
                         return this.handleSecurityQualityAudit(toolArgs.plugin_path, toolArgs.severity, toolArgs.strict);
+                    case 'wppqa_check_qa_coverage':
+                        return this.handleCheckQaCoverage(toolArgs.plugin_path, toolArgs.strict, toolArgs.dry_run);
                     case 'wppqa_check_visual_regression':
                         return this.handleCheckVisualRegression(toolArgs.plugin_path, toolArgs.site_url, toolArgs.autologin_param, toolArgs.admin_urls);
                     case 'wppqa_check_enum_consistency':
@@ -231,6 +234,17 @@ export class WpPluginQaServer {
         if (!pluginPath)
             return this.errorResult('plugin_path is required');
         const result = checkPluginDevRules(pluginPath);
+        return this.formatCheckerResult(result);
+    }
+    /**
+     * Manifest-driven QA coverage gate. Reads audit/manifest.json + test source,
+     * writes audit/qa-coverage.json, returns a CheckerResult that fails when
+     * uncovered_total regressed (or any uncovered with strict=true).
+     */
+    handleCheckQaCoverage(pluginPath, strict, dryRun) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkQaCoverage(pluginPath, { strict, dryRun });
         return this.formatCheckerResult(result);
     }
     /**

@@ -327,7 +327,8 @@ export type TestCategory =
   | 'enum-consistency'
   | 'rest-js-contract'
   | 'editor-layout-bias'
-  | 'template-contract';
+  | 'template-contract'
+  | 'qa-coverage';
 
 export interface TestItem {
   id: string;

@@ -28,6 +28,12 @@ export declare class WpPluginQaServer {
     private handleCheckUxGuidelines;
     private handleCheckPluginDevRules;
     /**
+     * Manifest-driven QA coverage gate. Reads audit/manifest.json + test source,
+     * writes audit/qa-coverage.json, returns a CheckerResult that fails when
+     * uncovered_total regressed (or any uncovered with strict=true).
+     */
+    private handleCheckQaCoverage;
+    /**
      * Focused security + code quality audit. Composes the high-signal trust-list
      * checks (plugin_dev_rules + plugin-check + composer-audit) and optionally
      * phpcs + phpstan. Filters out noisy heuristics like rest_js_contract and

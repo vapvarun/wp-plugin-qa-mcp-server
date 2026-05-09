@@ -391,6 +391,35 @@ export const tools = [
             required: ['plugin_path'],
         },
     },
+    // ─── 19a-tri. Manifest-driven QA coverage gate ──────────────────
+    // Reads audit/manifest.json (canonical inventory from wp-plugin-onboard)
+    // and asserts every tracked manifest category (rest, ajax, hooks_fired
+    // with consumers, cron, wp_cli) has corresponding test coverage. Writes
+    // audit/qa-coverage.json with per-item covered/uncovered map + drift
+    // summary. Same baseline-shrink discipline as phpstan-baseline:
+    // uncovered_total can drop, never grow.
+    {
+        name: 'wppqa_check_qa_coverage',
+        description: "Manifest-driven QA coverage gate. Reads audit/manifest.json and scans test source (includes/qa, includes/cli/journeys, includes/cli/scenarios, tests/) to assert every REST endpoint / AJAX handler / hook-with-consumer / cron / wp-cli command has corresponding test coverage. Writes audit/qa-coverage.json with per-item covered/uncovered map + drift summary (uncovered_total this run vs previous). Returns issues for each uncovered manifest entry (REST + AJAX = high severity, hooks = medium, cron + wp-cli = low) plus a critical 'coverage regression' issue when uncovered_total grew vs the previous run. Default behavior: only regressions fail. Use strict=true to fail on any uncovered. Use dry_run=true to skip writing audit/qa-coverage.json (useful for CI dry checks). Plugin-agnostic: requires only audit/manifest.json. Pair with /wp-plugin-onboard's bin/qa-stub-gen.php to scaffold test stubs from the per-item stub_command field.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+                strict: {
+                    type: 'boolean',
+                    description: 'Fail on any uncovered manifest entry (default false: only regressions vs the previous run fail). Useful for asserting 100% coverage on critical-path plugins.',
+                },
+                dry_run: {
+                    type: 'boolean',
+                    description: 'Compute coverage but do not write audit/qa-coverage.json. Useful for CI dry-run mode.',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
     // ─── 19a-bis. Focused security + code quality audit ─────────────
     // The pragmatic alternative to wppqa_audit_plugin (which runs all 11
     // checks and produces 600KB+ of mixed signal/noise). Only runs the
