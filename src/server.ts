@@ -1,8 +1,12 @@
 /**
- * WP Plugin QA MCP Server - Main Server (v3.1.0)
- * 15 tools focused on product evaluation.
- * Code quality checks are handled by WPCS MCP + Plugin Check PCP.
- * Note: No shell commands used. All checks are static analysis or HTTP-based.
+ * WP Plugin QA MCP Server - Main Server
+ * 31 tools across 5 groups: discovery (scan), code-quality (delegates to phpcs/
+ * phpstan/eslint/etc.), product-eval (admin/frontend/marketing/ux/templates/a11y),
+ * systemic-misalignment (wiring, enum, rest-js contract, editor-layout-bias,
+ * ux-guidelines, plugin-dev-rules, qa-coverage, visual-regression), and
+ * audit-workflows (one-shot audit_plugin + parallel journey-audit subsystem).
+ * Note: live-site checkers (api, db, browser, role-probe, visual-regression)
+ * degrade gracefully when site_url is missing.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -520,7 +524,7 @@ export class WpPluginQaServer {
     // Step 1: Scan plugin
     const manifest = this.getCachedManifest(pluginPath);
 
-    // Step 2: Code quality checks (11 checks)
+    // Step 2: Code quality checks (14 checks)
     const codeResults = runAllCodeChecks(pluginPath);
 
     // Step 3: Product evaluation checks
@@ -532,11 +536,27 @@ export class WpPluginQaServer {
     productResults.push(evaluateFrontend(manifest, pluginPath));
     productResults.push(evaluateMarketing(manifest, pluginPath));
 
+    // Step 3.5: Systemic misalignment checks
+    // These are the cross-layer gates that catch the bugs WPCS/PHPStan miss —
+    // half-wired settings, enum drift between PHP/JS, REST envelope mismatches,
+    // editor sidebar cram, missing focus rings, qa coverage gaps. Each one
+    // dispatches a real implementation that grep/AST-scans the plugin tree;
+    // none require a live site.
+    const systemicResults: CheckerResult[] = [];
+    systemicResults.push(checkWiringCompleteness(pluginPath));
+    systemicResults.push(checkEnumConsistency(pluginPath));
+    systemicResults.push(checkRestJsContract(pluginPath));
+    systemicResults.push(checkEditorLayoutBias(pluginPath));
+    systemicResults.push(checkUxGuidelines(pluginPath));
+    systemicResults.push(checkPluginDevRules(pluginPath));
+    systemicResults.push(checkQaCoverage(pluginPath));
+
     // Step 4: Live site checks (only if site_url provided)
     if (siteUrl) {
       productResults.push(await checkApi(manifest, siteUrl));
       productResults.push(await checkDatabase(manifest, siteUrl));
       productResults.push(checkBrowser(manifest, siteUrl));
+      systemicResults.push(checkVisualRegression({ pluginPath, siteUrl }));
     }
 
     // Step 5: Gap analysis
@@ -544,7 +564,7 @@ export class WpPluginQaServer {
     const categoryResult = analyzeExpectations(manifest);
 
     // Step 6: Build unified report
-    const allResults = [...codeResults, ...productResults];
+    const allResults = [...codeResults, ...productResults, ...systemicResults];
     const qaReport = buildReport(
       manifest.header.name || manifest.header.slug,
       manifest.header.version,
@@ -554,7 +574,13 @@ export class WpPluginQaServer {
 
     // Step 7: Format output
     if (format === 'json') {
-      return this.successResult(JSON.stringify({ audit: auditReport, customerExpectations: categoryResult, codeQuality: codeResults }, null, 2));
+      return this.successResult(JSON.stringify({
+        audit: auditReport,
+        customerExpectations: categoryResult,
+        codeQuality: codeResults,
+        productQuality: productResults,
+        systemicMisalignment: systemicResults,
+      }, null, 2));
     }
     if (format === 'sarif' || format === 'junit') {
       // Build a QaReport over every code-quality issue, then export it
@@ -572,27 +598,24 @@ export class WpPluginQaServer {
 
     let output = `FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
 
-    // Code quality summary
-    output += `CODE QUALITY (14 checks)\n${'-'.repeat(40)}\n`;
-    for (const r of codeResults) {
-      const errors = r.issues.filter(i => i.type === 'error').length;
-      const warnings = r.issues.filter(i => i.type === 'warning').length;
-      const infos = r.issues.filter(i => i.type === 'info').length;
-      const status = infos > 0 && errors === 0 && warnings === 0 ? 'SKIP' : errors === 0 ? 'PASS' : 'FAIL';
-      output += `  ${r.category.toUpperCase().padEnd(16)} ${status.padEnd(6)} ${errors} errors, ${warnings} warnings\n`;
-    }
-    const codeTotalErr = codeResults.reduce((s, r) => s + r.issues.filter(i => i.type === 'error').length, 0);
-    const codeTotalWarn = codeResults.reduce((s, r) => s + r.issues.filter(i => i.type === 'warning').length, 0);
-    output += `  ${'─'.repeat(40)}\n  CODE TOTAL: ${codeTotalErr} errors, ${codeTotalWarn} warnings\n\n`;
+    const renderGroup = (title: string, results: CheckerResult[]): string => {
+      let s = `${title} (${results.length} checks)\n${'-'.repeat(40)}\n`;
+      for (const r of results) {
+        const errors = r.issues.filter(i => i.type === 'error').length;
+        const warnings = r.issues.filter(i => i.type === 'warning').length;
+        const infos = r.issues.filter(i => i.type === 'info').length;
+        const status = infos > 0 && errors === 0 && warnings === 0 ? 'SKIP' : errors === 0 ? 'PASS' : 'FAIL';
+        s += `  ${r.category.toUpperCase().padEnd(20)} ${status.padEnd(6)} ${errors} errors, ${warnings} warnings\n`;
+      }
+      const totErr = results.reduce((acc, r) => acc + r.issues.filter(i => i.type === 'error').length, 0);
+      const totWarn = results.reduce((acc, r) => acc + r.issues.filter(i => i.type === 'warning').length, 0);
+      s += `  ${'─'.repeat(40)}\n  TOTAL: ${totErr} errors, ${totWarn} warnings\n\n`;
+      return s;
+    };
 
-    // Product quality summary
-    output += `PRODUCT QUALITY (${productResults.length} checks)\n${'-'.repeat(40)}\n`;
-    for (const r of productResults) {
-      const errors = r.issues.filter(i => i.type === 'error').length;
-      const warnings = r.issues.filter(i => i.type === 'warning').length;
-      output += `  ${r.category.toUpperCase().padEnd(16)} ${errors} errors, ${warnings} warnings\n`;
-    }
-    output += '\n';
+    output += renderGroup('CODE QUALITY', codeResults);
+    output += renderGroup('PRODUCT QUALITY', productResults);
+    output += renderGroup('SYSTEMIC MISALIGNMENT', systemicResults);
 
     // Audit report + category analysis
     output += formatAuditReport(auditReport);

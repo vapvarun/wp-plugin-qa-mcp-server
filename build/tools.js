@@ -421,15 +421,16 @@ export const tools = [
         },
     },
     // ─── 19a-bis. Focused security + code quality audit ─────────────
-    // The pragmatic alternative to wppqa_audit_plugin (which runs all 11
-    // checks and produces 600KB+ of mixed signal/noise). Only runs the
-    // high-signal subset for "is this safe + is the code good?" — drops
-    // every UX/templates/wiring-completeness/rest-js-contract heuristic
-    // that generates false positives on plugins with non-standard patterns
-    // (Interactivity API, settings via Models, etc.).
+    // The pragmatic alternative to wppqa_audit_plugin (which now runs 14
+    // code-quality + 6 product + 7 systemic-misalignment checks and produces
+    // 600KB+ of mixed signal/noise). Only runs the high-signal subset for
+    // "is this safe + is the code good?" — drops every UX/templates/
+    // wiring-completeness/rest-js-contract heuristic that generates false
+    // positives on plugins with non-standard patterns (Interactivity API,
+    // settings via Models, etc.).
     {
         name: 'wppqa_security_quality_audit',
-        description: "Focused security + code quality audit. Runs ONLY the high-signal trust-list checks: wppqa_check_plugin_dev_rules (security/UX rules from the wp-plugin-development skill: nonce-without-cap, $_POST iteration, alert/confirm ban, inline onclick, raw -1 inputs, tap targets, breakpoints) + plugin-check (WordPress.org PCP) + composer-audit (vendor vulnerabilities). Default returns ONLY high-severity findings (errors + high warnings); medium/low surfaced only when severity='all'. With strict=true, also runs phpcs and phpstan errors. Output ~10KB instead of wppqa_audit_plugin's 600KB+. Use this for PR gate / pre-release sanity / 'is this plugin safe to ship?'. Use wppqa_audit_plugin only for the broader review (UX, templates, market analysis, etc.) when you actually want all 11 checks.",
+        description: "Focused security + code quality audit. Runs ONLY the high-signal trust-list checks: wppqa_check_plugin_dev_rules (security/UX rules from the wp-plugin-development skill: nonce-without-cap, $_POST iteration, alert/confirm ban, inline onclick, raw -1 inputs, tap targets, breakpoints) + plugin-check (WordPress.org PCP) + composer-audit (vendor vulnerabilities). Default returns ONLY high-severity findings (errors + high warnings); medium/low surfaced only when severity='all'. With strict=true, also runs phpcs and phpstan errors. Output ~10KB instead of wppqa_audit_plugin's 600KB+. Use this for PR gate / pre-release sanity / 'is this plugin safe to ship?'. Use wppqa_audit_plugin only for the broader review (UX, templates, wiring, enum-consistency, REST/JS contract, editor-layout, ux-guidelines, qa-coverage, market analysis) when you want the full systemic gate.",
         inputSchema: {
             type: 'object',
             properties: {
@@ -526,7 +527,7 @@ export const tools = [
     // ─── 20. Full Audit (master tool) ─────────────────────────────
     {
         name: 'wppqa_audit_plugin',
-        description: 'Complete plugin audit — the ONE command that runs everything: scan features, run all 11 code quality checks, evaluate product (admin + frontend + marketing), check UX, check templates, check a11y, analyze market gaps, and generate graded report. Optional live site checks (API, DB, browser) if site_url provided. Output formats: markdown (default), json, sarif, junit.',
+        description: 'Complete plugin audit — the ONE command that runs everything: scan features, 14 code-quality checks, 6 product evaluators (UX, templates, a11y, admin, frontend, marketing), 7 systemic-misalignment checks (wiring-completeness, enum-consistency, rest-js-contract, editor-layout-bias, ux-guidelines, plugin-dev-rules, qa-coverage), gap analysis, and category-expectations analysis. With site_url, also runs API, DB, browser-stub, and visual-regression checks. Output formats: markdown (default), json, sarif, junit. Reports CODE QUALITY / PRODUCT QUALITY / SYSTEMIC MISALIGNMENT as three labelled sections so it is obvious which gate is failing.',
         inputSchema: {
             type: 'object',
             properties: {

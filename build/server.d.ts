@@ -1,8 +1,12 @@
 /**
- * WP Plugin QA MCP Server - Main Server (v3.1.0)
- * 15 tools focused on product evaluation.
- * Code quality checks are handled by WPCS MCP + Plugin Check PCP.
- * Note: No shell commands used. All checks are static analysis or HTTP-based.
+ * WP Plugin QA MCP Server - Main Server
+ * 31 tools across 5 groups: discovery (scan), code-quality (delegates to phpcs/
+ * phpstan/eslint/etc.), product-eval (admin/frontend/marketing/ux/templates/a11y),
+ * systemic-misalignment (wiring, enum, rest-js contract, editor-layout-bias,
+ * ux-guidelines, plugin-dev-rules, qa-coverage, visual-regression), and
+ * audit-workflows (one-shot audit_plugin + parallel journey-audit subsystem).
+ * Note: live-site checkers (api, db, browser, role-probe, visual-regression)
+ * degrade gracefully when site_url is missing.
  */
 export declare class WpPluginQaServer {
     private server;
