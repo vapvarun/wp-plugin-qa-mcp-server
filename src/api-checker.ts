@@ -5,7 +5,7 @@
  */
 
 import type { CheckerResult, CheckerIssue, PluginManifest } from './types.js';
-import { generateTestId } from './shared-utils.js';
+import { generateTestId, siteFetch } from './shared-utils.js';
 
 export async function checkApi(manifest: PluginManifest, siteUrl: string): Promise<CheckerResult> {
   const startTime = Date.now();
@@ -16,7 +16,7 @@ export async function checkApi(manifest: PluginManifest, siteUrl: string): Promi
   let authCookie = '';
   let wpNonce = '';
   try {
-    const loginResp = await fetch(`${baseUrl}/?autologin=1`, { redirect: 'manual' });
+    const loginResp = await siteFetch(`${baseUrl}/?autologin=1`, { redirect: 'manual' });
 
     // Extract cookies — compatible with Node 18+ (getSetCookie may not exist on older builds)
     let setCookies: string[] = [];
@@ -33,7 +33,7 @@ export async function checkApi(manifest: PluginManifest, siteUrl: string): Promi
 
     // Get WP REST nonce by loading wp-admin page and extracting wpApiSettings.nonce
     if (authCookie) {
-      const adminResp = await fetch(`${baseUrl}/wp-admin/`, {
+      const adminResp = await siteFetch(`${baseUrl}/wp-admin/`, {
         headers: { 'Cookie': authCookie },
       });
       if (adminResp.ok) {
@@ -61,7 +61,7 @@ export async function checkApi(manifest: PluginManifest, siteUrl: string): Promi
 
     // Test authenticated request
     try {
-      const authResp = await fetch(endpoint, {
+      const authResp = await siteFetch(endpoint, {
         headers: {
           'Cookie': authCookie,
           'X-WP-Nonce': wpNonce,
@@ -88,7 +88,7 @@ export async function checkApi(manifest: PluginManifest, siteUrl: string): Promi
     // Test unauthenticated request (for write endpoints)
     if (route.methods.some(m => ['POST', 'PUT', 'DELETE', 'PATCH'].includes(m))) {
       try {
-        const unauthResp = await fetch(endpoint, { method: route.methods[0] });
+        const unauthResp = await siteFetch(endpoint, { method: route.methods[0] });
         if (unauthResp.status === 200 || unauthResp.status === 201) {
           issues.push({
             id: generateTestId('api'), category: 'api', severity: 'critical', type: 'error',
@@ -110,7 +110,7 @@ export async function checkApi(manifest: PluginManifest, siteUrl: string): Promi
       const formData = new URLSearchParams();
       formData.append('action', handler.action);
 
-      const authResp = await fetch(ajaxUrl, {
+      const authResp = await siteFetch(ajaxUrl, {
         method: 'POST',
         headers: {
           'Cookie': authCookie,

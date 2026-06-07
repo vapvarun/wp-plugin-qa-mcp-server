@@ -5,6 +5,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, basename } from 'path';
+import { fetch as undiciFetch, Agent } from 'undici';
 
 // Directories excluded from every static check. `tests` is here because
 // test fixtures routinely contain deliberately-malformed HTML strings,
@@ -22,6 +23,20 @@ const DEFAULT_EXCLUDE_DIRS = [
   '__tests__',
   'bin',
 ];
+
+// LocalWP sites use self-signed certs. `siteFetch` relaxes TLS verification ONLY for
+// *.local / localhost hosts (never real external hosts) by routing those through an
+// undici dispatcher. Returns `any` to avoid undici-vs-DOM-lib type clashes at call sites.
+const localDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+export async function siteFetch(url: string, init: any = {}): Promise<any> {
+  try {
+    const host = new URL(url).hostname;
+    if (host === 'localhost' || host.endsWith('.local')) {
+      return undiciFetch(url, { ...init, dispatcher: localDispatcher });
+    }
+  } catch { /* not a parseable URL — fall through to strict TLS */ }
+  return undiciFetch(url, init);
+}
 
 /**
  * Find all PHP files in a directory tree, excluding common non-project dirs.

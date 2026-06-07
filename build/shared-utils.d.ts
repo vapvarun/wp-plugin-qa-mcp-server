@@ -2,6 +2,7 @@
  * WP Plugin QA MCP Server - Shared Utilities
  * Reused from wpcs-mcp-server with additions for QA-specific needs.
  */
+export declare function siteFetch(url: string, init?: any): Promise<any>;
 /**
  * Find all PHP files in a directory tree, excluding common non-project dirs.
  */

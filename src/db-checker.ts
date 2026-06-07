@@ -8,7 +8,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { CheckerResult, CheckerIssue, PluginManifest } from './types.js';
-import { generateTestId, findPhpFiles, relativePath, getLineNumber, safeReadFile } from './shared-utils.js';
+import { generateTestId, findPhpFiles, relativePath, getLineNumber, safeReadFile, siteFetch } from './shared-utils.js';
 
 export async function checkDatabase(manifest: PluginManifest, siteUrl: string): Promise<CheckerResult> {
   const startTime = Date.now();
@@ -18,12 +18,12 @@ export async function checkDatabase(manifest: PluginManifest, siteUrl: string): 
   let authCookie = '';
   let wpNonce = '';
   try {
-    const loginResp = await fetch(`${baseUrl}/?autologin=1`, { redirect: 'manual' });
-    const setCookies = loginResp.headers.getSetCookie?.() || [];
-    authCookie = setCookies.filter(c => c.includes('wordpress_logged_in')).join('; ');
+    const loginResp = await siteFetch(`${baseUrl}/?autologin=1`, { redirect: 'manual' });
+    const setCookies: string[] = loginResp.headers.getSetCookie?.() || [];
+    authCookie = setCookies.filter((c: string) => c.includes('wordpress_logged_in')).join('; ');
 
     if (authCookie) {
-      const nonceResp = await fetch(`${baseUrl}/wp-admin/admin-ajax.php?action=rest-nonce`, {
+      const nonceResp = await siteFetch(`${baseUrl}/wp-admin/admin-ajax.php?action=rest-nonce`, {
         headers: { 'Cookie': authCookie },
       });
       if (nonceResp.ok) wpNonce = await nonceResp.text();
@@ -42,7 +42,7 @@ export async function checkDatabase(manifest: PluginManifest, siteUrl: string): 
   for (const cpt of manifest.features.cpts) {
     if (cpt.hasRest) {
       try {
-        const resp = await fetch(`${baseUrl}/wp-json/wp/v2/types/${cpt.postType}`, {
+        const resp = await siteFetch(`${baseUrl}/wp-json/wp/v2/types/${cpt.postType}`, {
           headers: { 'Cookie': authCookie, 'X-WP-Nonce': wpNonce },
         });
         if (resp.status === 404) {

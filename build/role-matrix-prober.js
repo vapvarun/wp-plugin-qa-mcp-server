@@ -11,6 +11,7 @@
  * scanner logic. Uses Node 18+ fetch with 15s abort timeout. No dependencies.
  */
 import { scanPlugin } from './scanner.js';
+import { siteFetch } from './shared-utils.js';
 // ─── Defaults ──────────────────────────────────────────────────────
 export const DEFAULT_ROLES = [
     {
@@ -207,7 +208,8 @@ async function probeOne(siteUrl, row, role, expected) {
     let status = 0;
     let bodyExcerpt;
     try {
-        const res = await fetch(url, init);
+        // siteFetch allows LocalWP self-signed cert (*.local only) and returns `any`
+        const res = await siteFetch(url, init);
         status = res.status;
         // Treat manual-redirect opaque responses as their raw status (0 -> fallthrough).
         if (status === 0)

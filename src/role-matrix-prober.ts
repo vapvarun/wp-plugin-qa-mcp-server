@@ -12,6 +12,7 @@
  */
 
 import { scanPlugin } from './scanner.js';
+import { siteFetch } from './shared-utils.js';
 import type { PluginManifest, RestRouteInfo, AjaxHandlerInfo } from './types.js';
 
 // ─── Public Types ──────────────────────────────────────────────────
@@ -300,7 +301,8 @@ async function probeOne(
   let status = 0;
   let bodyExcerpt: string | undefined;
   try {
-    const res = await fetch(url, init);
+    // siteFetch allows LocalWP self-signed cert (*.local only) and returns `any`
+    const res = await siteFetch(url, init);
     status = res.status;
     // Treat manual-redirect opaque responses as their raw status (0 -> fallthrough).
     if (status === 0) status = res.type === 'opaqueredirect' ? 302 : 0;

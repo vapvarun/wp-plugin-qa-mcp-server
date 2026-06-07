@@ -574,10 +574,26 @@ export class WpPluginQaServer {
 
     // Step 7: Format output
     if (format === 'json') {
+      // Compact by default: the full per-issue `code` snippets + double-emitted
+      // codeResults made this ~600KB and blew caller token limits. Emit counts +
+      // top-N for the code checks; keep the newer product/systemic summaries.
+      const slimChecks = codeResults.map((r: any) => ({
+        category: r.category, passed: r.passed, failed: r.failed, skipped: r.skipped,
+        errors: r.issues.filter((i: any) => i.type === 'error').length,
+        warnings: r.issues.filter((i: any) => i.type === 'warning').length,
+        topIssues: r.issues.filter((i: any) => i.type === 'error').slice(0, 5)
+          .map(({ id, severity, title, file, line, fix }: any) => ({ id, severity, title, file, line, fix })),
+      }));
+      const cq: any = auditReport.codeQuality;
+      const slimAudit: any = {
+        ...auditReport,
+        codeQuality: cq && { grade: cq.grade, score: cq.score, summary: cq.summary, categories: cq.categories, bugs: (cq.bugs || []).slice(0, 20) },
+        gapAnalysis: ((auditReport as any).gapAnalysis || []).slice(0, 30),
+      };
       return this.successResult(JSON.stringify({
-        audit: auditReport,
+        audit: slimAudit,
         customerExpectations: categoryResult,
-        codeQuality: codeResults,
+        codeQuality: slimChecks,
         productQuality: productResults,
         systemicMisalignment: systemicResults,
       }, null, 2));
