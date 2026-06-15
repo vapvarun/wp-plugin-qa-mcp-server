@@ -660,6 +660,29 @@ const allTools = [
             required: ['wp_root', 'cli_namespace'],
         },
     },
+    // ─── Generic functional audit (plugin-agnostic, no per-plugin PHP) ──────
+    {
+        name: 'wppqa_audit',
+        description: 'Run the GENERIC functional-certification engine on ANY plugin with no per-plugin code. It scans the plugin to a manifest, then executes the bundled PHP engine via `wp eval-file` against the live site: boots every GET route (no fatals), behaviour-flips every oracle (dead-toggle confirmation), and surfaces static candidates (options written-but-never-enforced, features missing a layer) for confirmation. Returns confirmed failures + unconfirmed candidates. This is the reusable form for all 100+ products — use it instead of wppqa_certify when the plugin has no `cert` WP-CLI command.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                wp_root: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress root the plugin is active on.',
+                },
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the plugin directory to scan + certify.',
+                },
+                oracles_path: {
+                    type: 'string',
+                    description: 'Optional path to a cert-oracles.json (contract checks). Omit to run boot + candidates only.',
+                },
+            },
+            required: ['wp_root', 'plugin_path'],
+        },
+    },
 ];
 // ─── Functionality-first surface (user directive 2026-06-15) ──────────────────
 // This MCP audits whether features WORK. Code quality, plugin-check, lint

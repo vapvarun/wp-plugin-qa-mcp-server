@@ -19,6 +19,11 @@
  */
 
 import { execFileSync } from 'child_process';
+import { writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { scanPlugin } from './scanner.js';
 
 export interface CertifyOptions {
   /** Absolute path to the WordPress root the plugin is active on. */
@@ -31,7 +36,7 @@ export interface CertifyOptions {
 
 export interface CertifyLedger {
   ok: boolean;
-  summary: { pass: number; fail: number; hole: number };
+  summary: Record<string, number>;
   rows: Array<{ check: string; entity: string; status: string; detail: string }>;
 }
 
@@ -116,6 +121,59 @@ export function formatCertify(result: CertifyResult): string {
   if (holes.length) {
     lines.push('\nHOLES (no oracle yet — add one to audit/cert-oracles.json):');
     for (const h of holes) lines.push(`  ? ${h.entity}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Run the GENERIC engine (plugin-agnostic) against any plugin: scan it to a manifest,
+ * write the manifest to /tmp, then `wp eval-file engine/cert-engine.php <manifest> [oracles]`.
+ * This is the path that works for all 100+ products with no per-plugin PHP.
+ */
+export function runEngine(opts: { wpRoot: string; pluginPath: string; oraclesPath?: string }): CertifyResult {
+  const { wpRoot, pluginPath, oraclesPath } = opts;
+  if (!wpRoot) return { ran: false, error: 'wp_root is required' };
+  if (!pluginPath) return { ran: false, error: 'plugin_path is required' };
+
+  const manifest = scanPlugin(pluginPath);
+  const manifestTmp = join(tmpdir(), `cert-manifest-${process.pid}.json`);
+  writeFileSync(manifestTmp, JSON.stringify(manifest));
+
+  const enginePath = join(dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'cert-engine.php');
+  const args = [`--path=${wpRoot}`, 'eval-file', enginePath, manifestTmp];
+  if (oraclesPath) args.push(oraclesPath);
+
+  let stdout = '';
+  try {
+    stdout = execFileSync('wp', args, { encoding: 'utf-8', stdio: 'pipe', timeout: 180000 });
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; message?: string };
+    stdout = err.stdout ?? '';
+    if (!stdout) return { ran: false, error: `engine failed: ${err.message ?? 'unknown'}` };
+  }
+  const parsed = extractJson(stdout);
+  if (!parsed) return { ran: true, raw: stdout, error: 'could not parse engine ledger JSON' };
+  return { ran: true, ledger: parsed };
+}
+
+/** Format the generic engine ledger: failures first, then candidates (unconfirmed), then counts. */
+export function formatEngine(result: CertifyResult): string {
+  if (!result.ran) return `Engine did not run: ${result.error ?? 'unknown error'}`;
+  if (!result.ledger) return `Engine ran but ledger unparseable.\n${(result.raw ?? '').slice(0, 2000)}`;
+  const { ok, summary, rows } = result.ledger;
+  const fails = rows.filter((r) => r.status === 'fail');
+  const cands = rows.filter((r) => r.status === 'candidate');
+  const lines: string[] = [];
+  lines.push(ok ? '✓ FUNCTIONAL CERTIFICATION PASSED' : '✗ FUNCTIONAL CERTIFICATION FAILED');
+  lines.push(`${summary.pass ?? 0} passed · ${summary.fail ?? 0} failed · ${summary.candidate ?? 0} candidates (unconfirmed)`);
+  if (fails.length) {
+    lines.push('\nFAILURES (confirmed — a feature does not behave):');
+    for (const f of fails) lines.push(`  ✗ ${f.check}/${f.entity} — ${f.detail}`);
+  }
+  if (cands.length) {
+    lines.push('\nCANDIDATES (static smell — confirm or add an oracle):');
+    for (const c of cands.slice(0, 40)) lines.push(`  ? ${c.entity} — ${c.detail}`);
+    if (cands.length > 40) lines.push(`  …and ${cands.length - 40} more`);
   }
   return lines.join('\n');
 }

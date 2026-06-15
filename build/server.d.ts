@@ -23,6 +23,7 @@ export declare class WpPluginQaServer {
     private setupToolHandlers;
     private handleScanPlugin;
     private handleCertify;
+    private handleAudit;
     private handleCheckApi;
     private handleCheckDatabase;
     private handleCheckBrowser;
