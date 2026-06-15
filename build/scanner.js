@@ -38,8 +38,11 @@ export function scanPlugin(pluginPath) {
     const cronJobs = scanCronJobs(phpFiles, phpContents, pluginPath);
     const cliCommands = scanCliCommands(phpFiles, phpContents, pluginPath);
     const dbTables = scanDbTables(phpFiles, phpContents, pluginPath);
-    const templates = scanTemplates(pluginPath);
+    const templates = scanTemplates(pluginPath, phpContents);
     const hooks = scanHooks(phpFiles, phpContents, pluginPath);
+    const hookListeners = scanHookListeners(phpFiles, phpContents, pluginPath);
+    const frontendJs = scanFrontendJs(pluginPath);
+    const featureGroups = scanFeatureGroups(optionsWiring, restRoutes, templates, adminPages, phpContents);
     const activationHooks = scanActivationHooks(phpFiles, phpContents, pluginPath);
     const customRoles = scanCustomRoles(phpFiles, phpContents, pluginPath);
     const imageSizes = scanImageSizes(phpFiles, phpContents, pluginPath);
@@ -73,6 +76,9 @@ export function scanPlugin(pluginPath) {
             adminPages,
             settings,
             optionsWiring,
+            hookListeners,
+            featureGroups,
+            frontendJs,
             widgets,
             metaBoxes,
             cronJobs,
@@ -303,6 +309,8 @@ function scanRestRoutes(phpFiles, contents, pluginPath) {
                 permissionCallback: permCallback,
                 file: rel,
                 line: getLineNumber(content, match.index),
+                requestArgs: parseRequestArgs(context),
+                gatedBy: findGatedByOption(content),
             });
         }
     }
@@ -590,6 +598,123 @@ function isEnforcementSite(content, idx) {
     const after = content.slice(idx, idx + 200);
     return /\breturn\b|WP_Error/.test(after) && /\bif\b/.test(before + after.slice(0, 40));
 }
+// Parse the `args` map of a register_rest_route context into {name,type,required}.
+function parseRequestArgs(context) {
+    const out = [];
+    const argsIdx = context.search(/['"]args['"]\s*=>/);
+    if (argsIdx === -1)
+        return out;
+    const slice = context.slice(argsIdx, argsIdx + 1200);
+    // Each "<name>" => array( ... ) entry.
+    const entryRe = /['"]([A-Za-z0-9_]+)['"]\s*=>\s*(?:array\s*\(|\[)([^\)\]]{0,200})/g;
+    let e;
+    while ((e = entryRe.exec(slice)) !== null) {
+        const name = e[1];
+        if (name === 'args' || name === 'methods' || name === 'callback' || name === 'permission_callback')
+            continue;
+        const body = e[2];
+        const typeM = body.match(/['"]type['"]\s*=>\s*['"](\w+)['"]/);
+        const reqM = body.match(/['"]required['"]\s*=>\s*(true|false)/);
+        out.push({ name, type: typeM ? typeM[1] : 'string', required: reqM ? reqM[1] === 'true' : false });
+    }
+    return out;
+}
+// Best-effort: the first option whose get_option() is used as a guard in this file.
+function findGatedByOption(content) {
+    const m = content.match(/if\s*\(\s*!?\s*\(?\s*(?:\(bool\)\s*)?get_option\s*\(\s*['"]([A-Za-z0-9_]+)['"]/);
+    return m ? m[1] : undefined;
+}
+// --- Scanner: Hooks -> listeners (manifest v2) ---
+// For every do_action/apply_filters fired, list the add_action/add_filter callbacks bound to it.
+export function scanHookListeners(phpFiles, contents, pluginPath) {
+    const fired = new Set();
+    const listeners = new Map();
+    const fireRe = /\b(?:do_action|apply_filters)\s*\(\s*['"]([^'"]+)['"]/g;
+    const bindRe = /\b(?:add_action|add_filter)\s*\(\s*['"]([^'"]+)['"]\s*,\s*([^,)\n]+)/g;
+    for (const file of phpFiles) {
+        const content = contents.get(file) || '';
+        const rel = relativePath(file, pluginPath);
+        let m;
+        while ((m = fireRe.exec(content)) !== null)
+            fired.add(m[1]);
+        while ((m = bindRe.exec(content)) !== null) {
+            const hook = m[1];
+            const cb = m[2].trim().replace(/\s+/g, ' ').slice(0, 80);
+            if (!listeners.has(hook))
+                listeners.set(hook, []);
+            listeners.get(hook).push({ callback: cb, file: rel, line: getLineNumber(content, m.index) });
+        }
+    }
+    // Report every fired hook with its listeners (empty array = fired-but-nobody-listening smell).
+    const out = [];
+    for (const hook of fired)
+        out.push({ hook, listeners: listeners.get(hook) || [] });
+    return out;
+}
+// --- Scanner: Feature groups (manifest v2) ---
+// Detect feature flags (FeatureRegistry catalog entries, else slug-token clusters) and
+// group the routes/templates/options/admin pages each controls, flagging missing layers.
+export function scanFeatureGroups(optionsWiring, restRoutes, templates, adminPages, phpContents) {
+    // Source flags from a FeatureRegistry-style catalog: 'slug' => array( 'tier' => self::TIER_* ).
+    const flags = new Map();
+    for (const content of phpContents.values()) {
+        const re = /['"]([a-z0-9_]+)['"]\s*=>\s*array\s*\(\s*['"]slug['"]\s*=>\s*['"]\1['"][^)]*['"]tier['"]\s*=>\s*self::TIER_(\w+)/g;
+        let m;
+        while ((m = re.exec(content)) !== null)
+            flags.set(m[1], m[2].toLowerCase());
+    }
+    const out = [];
+    for (const [slug, tier] of flags) {
+        const token = slug.replace(/s$/, ''); // crude singular for matching
+        const routes = restRoutes.filter((r) => r.route.includes(slug) || r.route.includes(token) || r.gatedBy?.includes(slug)).map((r) => r.route);
+        const tpls = templates.filter((t) => t.file.includes(slug) || t.file.includes(token)).map((t) => t.file);
+        const opts = optionsWiring.filter((o) => o.optionName.includes(slug) || o.optionName.includes(token)).map((o) => o.optionName);
+        const admins = adminPages.filter((a) => (a.slug || '').includes(slug) || (a.title || '').toLowerCase().includes(token)).map((a) => a.slug || a.title);
+        const missing = [];
+        if (routes.length === 0)
+            missing.push('api');
+        if (tpls.length === 0)
+            missing.push('frontend');
+        if (admins.length === 0 && opts.length === 0)
+            missing.push('backend');
+        out.push({ slug, tier, routes, templates: tpls, options: opts, adminPages: admins, missingLayers: missing });
+    }
+    return out;
+}
+// --- Scanner: Frontend JS REST consumption (manifest v2) ---
+// For each JS asset, the REST routes it fetches and (best-effort) the response keys it reads.
+export function scanFrontendJs(pluginPath) {
+    const out = [];
+    const jsDirs = ['assets/js', 'js', 'build', 'src/js', 'public/js'];
+    for (const dir of jsDirs) {
+        const full = join(pluginPath, dir);
+        for (const file of findJsFiles(full)) {
+            const content = safeReadFile(file);
+            if (!content)
+                continue;
+            const rel = relativePath(file, pluginPath);
+            const callsRest = new Set();
+            const callRe = /(?:apiFetch|fetch)\s*\(\s*\{?[^)]*?['"`]([^'"`]*\/[a-z0-9-]+\/v\d[^'"`]*)['"`]|['"`](\/wp-json\/[^'"`]+)['"`]/g;
+            let m;
+            while ((m = callRe.exec(content)) !== null)
+                callsRest.add(m[1] || m[2]);
+            // reads_keys: destructured keys from a response — low confidence.
+            const readsKeys = new Set();
+            const destrRe = /const\s*\{\s*([a-zA-Z0-9_,\s]+)\}\s*=\s*(?:await\s+)?(?:res|response|data|json)\b/g;
+            while ((m = destrRe.exec(content)) !== null) {
+                for (const k of m[1].split(',')) {
+                    const t = k.trim();
+                    if (t)
+                        readsKeys.add(t);
+                }
+            }
+            if (callsRest.size > 0 || readsKeys.size > 0) {
+                out.push({ module: rel, callsRest: [...callsRest], readsKeys: [...readsKeys], keysConfidence: readsKeys.size > 0 ? 'low' : 'high' });
+            }
+        }
+    }
+    return out;
+}
 // --- Scanner 10: Widgets ---
 function scanWidgets(phpFiles, contents, pluginPath) {
     const widgets = [];
@@ -726,9 +851,11 @@ function scanDbTables(phpFiles, contents, pluginPath) {
     return tables;
 }
 // --- Scanner 15: Templates ---
-function scanTemplates(pluginPath) {
+function scanTemplates(pluginPath, allPhp) {
     const templates = [];
     const templateDirs = ['templates', 'partials', 'views', 'public/partials', 'includes/templates'];
+    // Concatenate all PHP once so loaderArgs can find the load call for each template.
+    const allPhpJoined = allPhp ? [...allPhp.values()].join('\n') : '';
     for (const dir of templateDirs) {
         const fullDir = join(pluginPath, dir);
         const phpFiles = findPhpFiles(fullDir);
@@ -741,9 +868,41 @@ function scanTemplates(pluginPath) {
             while ((match = hookPattern.exec(content)) !== null) {
                 hooks.push(match[1]);
             }
+            // varsUsed: $names the template references (high confidence). Exclude superglobals + chrome.
+            const skip = new Set(['this', 'args', '_GET', '_POST', '_REQUEST', '_SERVER', '_SESSION', 'wpdb', 'post', 'wp_query']);
+            const varsUsed = new Set();
+            const varRe = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+            let vm;
+            while ((vm = varRe.exec(content)) !== null) {
+                if (!skip.has(vm[1]))
+                    varsUsed.add(vm[1]);
+            }
+            // loaderArgs: find a load call referencing this template's slug + grab the array keys (low confidence).
+            const base = rel.replace(/\.php$/, '').split('/').pop() || '';
+            const loaderArgs = new Set();
+            let confidence = 'low';
+            if (allPhpJoined && base) {
+                const loadRe = new RegExp(`(?:get_template|load_template|get_part)[^;]{0,120}['"][^'"]*${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^'"]*['"][^;]{0,300}?(?:array\\s*\\(|\\[)([^\\)\\]]{0,400})`, 'g');
+                let lm;
+                while ((lm = loadRe.exec(allPhpJoined)) !== null) {
+                    const keyRe = /['"]([A-Za-z0-9_]+)['"]\s*=>/g;
+                    let km;
+                    while ((km = keyRe.exec(lm[1])) !== null) {
+                        loaderArgs.add(km[1]);
+                        confidence = 'high';
+                    }
+                }
+            }
             const slug = detectPluginSlug(pluginPath);
             const overridePath = `theme/${slug}/${rel.replace(/^(?:templates|partials|views)\//, '')}`;
-            templates.push({ file: rel, overridePath, hooksInTemplate: hooks });
+            templates.push({
+                file: rel,
+                overridePath,
+                hooksInTemplate: hooks,
+                varsUsed: [...varsUsed],
+                loaderArgs: [...loaderArgs],
+                argsConfidence: confidence,
+            });
         }
     }
     return templates;

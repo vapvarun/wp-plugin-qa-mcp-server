@@ -65,6 +65,10 @@ export interface RestRouteInfo {
   permissionCallback: string;
   file: string;
   line: number;
+  /** Request args declared in the route's `args` map (manifest v2). */
+  requestArgs?: Array<{ name: string; type: string; required: boolean }>;
+  /** Option/feature flag whose get_option() guard sits in this route's file (manifest v2, best-effort). */
+  gatedBy?: string;
 }
 
 export interface AjaxHandlerInfo {
@@ -157,6 +161,39 @@ export interface TemplateFileInfo {
   file: string;
   overridePath: string;
   hooksInTemplate: string[];
+  /** Variables the template references ($foo) — manifest v2 (high confidence). */
+  varsUsed?: string[];
+  /** Variable keys the loader supplies via its $args array — manifest v2 (low confidence: dynamic). */
+  loaderArgs?: string[];
+  /** 'high' when loaderArgs were resolved from a literal array; 'low' when not found. */
+  argsConfidence?: 'high' | 'low';
+}
+
+/** A fired hook mapped to the listeners (add_action/add_filter callbacks) that consume it. v2. */
+export interface HookListenerInfo {
+  hook: string;
+  listeners: Array<{ callback: string; file: string; line: number }>;
+}
+
+/** A feature flag grouped with the surfaces it controls across layers. v2. */
+export interface FeatureGroupInfo {
+  slug: string;
+  tier: string;
+  /** Surfaces detected for this feature, by layer. */
+  routes: string[];
+  templates: string[];
+  options: string[];
+  adminPages: string[];
+  /** Layers with zero detected surface — the "missing UX / half-wired" smell. */
+  missingLayers: string[];
+}
+
+/** A frontend JS module and the REST it consumes. v2 (reads_keys low confidence: dynamic). */
+export interface FrontendJsInfo {
+  module: string;
+  callsRest: string[];
+  readsKeys: string[];
+  keysConfidence: 'high' | 'low';
 }
 
 export interface HookInfo {
@@ -285,6 +322,9 @@ export interface PluginManifest {
     adminPages: AdminPageInfo[];
     settings: SettingInfo[];
     optionsWiring: OptionWiringInfo[];
+    hookListeners: HookListenerInfo[];
+    featureGroups: FeatureGroupInfo[];
+    frontendJs: FrontendJsInfo[];
     widgets: WidgetInfo[];
     metaBoxes: MetaBoxInfo[];
     cronJobs: CronJobInfo[];
