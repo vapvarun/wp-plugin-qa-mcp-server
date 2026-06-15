@@ -18,6 +18,19 @@ is a correction this harness should have produced first.
 are noise here and run separately. This harness answers exactly one question: *does the feature
 the agent just touched actually work, in every layer it claims?*
 
+## Scope of this spec (read this before the architecture)
+
+This document has two layers, kept deliberately separate so nothing reads as more-built than it is:
+
+- **The target architecture** (sections "Architecture", "Expectations", "MCP surface") — the
+  detective → cert → learn system we are aiming at. Aspirational; do not assume any of it is built.
+- **THE BUILD** (the section titled exactly that, near the end) — the *one concrete, bounded thing
+  that ships from this spec*: a Stop hook wiring the **already-working** cert (`contract`+`boot`) into
+  the agent's session. Everything in the target architecture beyond that is in "Later", and most of it
+  is **blocked on a manifest enrichment that does not exist yet** — stated plainly, not phased in.
+
+If you only read one section, read **THE BUILD**.
+
 ## The core failure being fixed (in priority order)
 
 1. **Noise / false positives** — today's checkers pattern-match code and *advise*; they emit
@@ -105,21 +118,30 @@ Layers come from the manifest's existing sections (`rest`, `admin_pages`, `servi
 `templates`, `frontend_assets`, `hooks`). The product-level `category_expectations` checker is
 kept but **reconciled against the manifest** (whole-feature presence), not run free-hand.
 
-## cert oracle kinds (the jury's vocabulary)
+## cert oracle kinds — what is ACTUALLY buildable now vs blocked
 
-cert grows from 2 kinds to 5. Each kind = a deterministic runtime assertion:
+Hard truth after auditing `audit/manifest.json`: its sections are `plugin, rest, ajax, admin_pages,
+tables, services, hooks_fired, capabilities, cron, blocks, shortcodes, frontend_assets`. It has **no
+`templates` section, and REST endpoints carry no response schema** (only route/methods/handler/
+permission/purpose). So:
 
-- `contract` *(exists)* — flip the setting OFF/ON; assert the REST behaviour flips.
-- `boot` *(exists)* — dispatch the route; assert no fatal / 500.
-- `render` *(new)* — render the template with its loader's declared `$args`; **fail on an
-  undefined-variable notice or missing expected output**.
-- `shape` *(new)* — dispatch the route; assert the response contains the keys the paired JS
-  consumer reads (sourced from the rest-js contract).
-- `wiring` *(new)* — assert the feature actually responds in all three layers (front render
-  present, admin/service reachable, REST route live).
+**Buildable now — already built + verified:**
+- `contract` — flip a setting OFF/ON via internal REST dispatch; assert the disabled error code
+  appears when off, absent when on. *5 oracles passing on buddynext.*
+- `boot` — dispatch every GET route from the manifest; assert no fatal / 500. *60 routes, 0 fail.*
 
-Oracle row stays compact: `{ id, kind, route, expect }`. The whole oracle file grows ~1 line per
-confirmed bug.
+**NOT buildable yet — each blocked on a concrete manifest enrichment, named so we don't pretend:**
+- `render` (template contract) — **blocked on:** a `templates` section recording each template's
+  slug + the `$args` keys its loader passes. Does not exist. Building `render` means first teaching
+  the manifest generator to emit it.
+- `shape` (REST↔JS) — **blocked on:** REST endpoints recording their response key set (or a detective
+  statically extracting the keys each JS consumer reads). Neither exists today.
+- `wiring` (3-layer reachability) — **blocked on:** a feature→{template, admin/service, route}
+  mapping. The manifest has the raw layers but no grouping into "features".
+
+These three are **explicitly OUT OF SCOPE for this build** — a separate, later effort whose real first
+task is enriching the manifest, not a phase to slip in as if designed. The oracle row format
+`{ id, kind, route, expect }` already accommodates them once their data exists.
 
 ## Storage policy — `audit/` must never outgrow the plugin
 
@@ -165,29 +187,51 @@ plugin.
 - **cert can't reach a live site** → the audit reports which kinds it could not run (coverage-honest),
   rather than passing silently.
 
-## Phasing (lean vertical slices, each verifiable)
+## THE BUILD (this spec) — exact scope, no hedging
 
-Wiring first — an unwired harness is waste — using the cert that already works (`contract`+`boot`).
+**What I am building:** a Claude Code **Stop hook** that runs the existing, working `wp <ns> cert`
+(`contract`+`boot`) on the code I touched this session and **blocks me from finishing if I introduced
+a failure** — feeding the cert verdict back as a correction. Nothing more. It uses cert as-is; it adds
+no new cert kinds, no detective rewrite, no manifest changes.
 
-- **P1 (the wiring — proves real-time self-correction):** the **Stop-hook gate**. It runs the
-  EXISTING cert (`contract`+`boot`) scoped to the agent's touched surfaces, blocks on
-  agent-introduced failures, injects corrections. Plus point the detectives at `manifest.json`.
-  This immediately catches the dead-toggle / route-fatal regressions the agent makes, in-session.
-  Verified: plant a dead toggle, confirm the Stop hook blocks the turn with the correction; fix,
-  confirm it lets the turn finish.
-- **P2 (grow what gets caught):** add the **`render`** (template contract), **`shape`** (rest-js),
-  and **`wiring`** (3-layer) cert kinds; re-point those detectives to the manifest + typed-candidate
-  output so the Stop hook now also blocks on those classes.
-- **P3 (deep audits + cleanup):** the **`wppqa_audit`** orchestrator (whole-plugin detective → cert →
-  learn) + the confirmed-correction return shape; retire the superseded advisory tools once their
-  detectives feed cert.
+### Exact artifacts
+1. `~/.mcp-servers/wp-plugin-qa-mcp-server/hooks/cert-stop.sh` — the hook script. Behaviour:
+   - Resolve the target: read `BN_CERT` config — a JSON `{ wp_path, cli_ns }` from
+     `$CLAUDE_PROJECT_DIR/.cert.json` (per-repo), else env `BN_WP_PATH`/`BN_CERT_NS`. If neither
+     resolves → **exit 0** (hook is a no-op for non-cert repos).
+   - `git -C <repo> diff --name-only` since the session baseline. If no file under the plugin
+     changed → **exit 0** (conversational turns cost nothing).
+   - Run `wp --path=<wp_path> <cli_ns> cert --porcelain`; parse the JSON ledger.
+   - Compare `fail` rows against the **baseline ledger** captured at session start
+     (`/tmp/cert-baseline-<session>.json`). Block only on `fail` rows **not** in the baseline
+     (failures I introduced), never on pre-existing ones.
+   - New fails → print JSON `{"decision":"block","reason": <the fail rows as file/entity + verdict>}`
+     to stdout and exit 0 (Claude Code reads the block decision). No new fails → exit 0 silently.
+2. A baseline capture: a `SessionStart` hook (or the first `cert-stop` run) writes
+   `/tmp/cert-baseline-<session>.json` = the ledger at session start.
+3. `.cert.json` example committed to the buddynext repo: `{ "wp_path": "…/app/public", "cli_ns": "buddynext" }`.
+4. A `~/.claude/settings.json` snippet (documented, applied with consent) registering the `Stop`
+   (and `SessionStart`) hook.
+5. A short "How the cert Stop-hook works" section in buddynext's CLAUDE.md.
 
-## Testing
+### What this build is NOT
+- Not the `render`/`shape`/`wiring` cert kinds (blocked on manifest enrichment — separate effort).
+- Not the detective→cert wiring or `wppqa_audit` orchestrator (those depend on the new kinds).
+- Not any manifest-generator change.
 
-- Detective: given a manifest fixture with a known missing layer, emits exactly that candidate.
-- cert kinds: each new kind goes red on a seeded break and green when fixed (the existing
-  "break-it-watch-it-red" discipline).
-- Loop: a planted dead toggle is found by the detective, confirmed by cert, and a re-run after the
-  fix is green with the oracle persisted.
-- Storage: after a full audit run, `audit/` contains only `manifest.json` + `cert-oracles.json`
-  (no new files); `cert-ledger.json` is gitignored.
+### Verification (definition of done for THIS build)
+- Plant a dead toggle in buddynext → the Stop hook **blocks** the turn, printing the
+  `contract/<flag>` fail as the correction. Fix it → the hook lets the turn finish.
+- Break a GET route to fatal → blocked on the `boot/<route>` fail. Fix → passes.
+- A pre-existing failure present at session start does **not** block (baseline diff works).
+- A conversational turn with no plugin edit → hook exits in <50ms, no cert run.
+
+## Later (explicitly deferred, prerequisite-gated — NOT this build)
+
+1. **Manifest enrichment** (the real prerequisite): add a `templates` section (slug + loader `$args`)
+   and REST response key sets to the manifest generator. Until this lands, render/shape/wiring cannot
+   be built.
+2. After (1): the `render`/`shape`/`wiring` cert kinds + re-pointing the detectives
+   (`template_contract`, `rest_js_contract`, `wiring_completeness`) to emit typed candidates.
+3. After (2): the `wppqa_audit` MCP orchestrator (whole-plugin detective → cert → learn) and retiring
+   the superseded advisory tools.
