@@ -95,6 +95,28 @@ export interface SettingInfo {
   line: number;
 }
 
+/** One call site touching a WordPress option. */
+export interface OptionSite {
+  file: string;
+  line: number;
+  /** 'read' = get_option; 'write' = update_option/add_option; 'delete' = delete_option. */
+  kind: 'read' | 'write' | 'delete';
+  /** True when a read site sits inside a conditional or guards an early return/WP_Error
+   *  (i.e. the option actually GATES behaviour, not just displays it). */
+  enforces: boolean;
+}
+
+/** Every place a single option is wired across the plugin. */
+export interface OptionWiringInfo {
+  optionName: string;
+  /** Default value passed to the first get_option(name, <default>) found, or '' if none. */
+  defaultValue: string;
+  writtenAt: OptionSite[];
+  readAt: OptionSite[];
+  /** Subset of readAt where enforces === true. Empty array = "saved but never enforced" (dead toggle smell). */
+  enforcedAt: OptionSite[];
+}
+
 export interface WidgetInfo {
   className: string;
   idBase: string;
@@ -262,6 +284,7 @@ export interface PluginManifest {
     ajaxHandlers: AjaxHandlerInfo[];
     adminPages: AdminPageInfo[];
     settings: SettingInfo[];
+    optionsWiring: OptionWiringInfo[];
     widgets: WidgetInfo[];
     metaBoxes: MetaBoxInfo[];
     cronJobs: CronJobInfo[];

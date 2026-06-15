@@ -32,6 +32,7 @@ export function scanPlugin(pluginPath) {
     const ajaxHandlers = scanAjaxHandlers(phpFiles, phpContents, pluginPath);
     const adminPages = scanAdminPages(phpFiles, phpContents, pluginPath);
     const settings = scanSettings(phpFiles, phpContents, pluginPath);
+    const optionsWiring = scanOptionsWiring(phpFiles, phpContents, pluginPath);
     const widgets = scanWidgets(phpFiles, phpContents, pluginPath);
     const metaBoxes = scanMetaBoxes(phpFiles, phpContents, pluginPath);
     const cronJobs = scanCronJobs(phpFiles, phpContents, pluginPath);
@@ -71,6 +72,7 @@ export function scanPlugin(pluginPath) {
             ajaxHandlers,
             adminPages,
             settings,
+            optionsWiring,
             widgets,
             metaBoxes,
             cronJobs,
@@ -535,6 +537,58 @@ function scanSettings(phpFiles, contents, pluginPath) {
         }
     }
     return settings;
+}
+// --- Scanner: Options wiring (manifest v2) ---
+// Finds every get_option/update_option/add_option/delete_option call, groups by
+// option name, and marks a read as an ENFORCEMENT when it sits inside a conditional
+// or guards an early return/WP_Error within ~200 chars after the call.
+export function scanOptionsWiring(phpFiles, contents, pluginPath) {
+    const byName = new Map();
+    // Capture: fn name, option name, optional default (first arg group after the name).
+    const re = /\b(get_option|update_option|add_option|delete_option)\s*\(\s*['"]([A-Za-z0-9_]+)['"]\s*(?:,\s*([^),]+))?/g;
+    for (const file of phpFiles) {
+        const content = contents.get(file) || '';
+        const rel = relativePath(file, pluginPath);
+        let m;
+        while ((m = re.exec(content)) !== null) {
+            const fn = m[1];
+            const name = m[2];
+            const rawDefault = (m[3] || '').trim();
+            const line = getLineNumber(content, m.index);
+            let row = byName.get(name);
+            if (!row) {
+                row = { optionName: name, defaultValue: '', writtenAt: [], readAt: [], enforcedAt: [] };
+                byName.set(name, row);
+            }
+            if (fn === 'get_option') {
+                if (!row.defaultValue && rawDefault)
+                    row.defaultValue = rawDefault;
+                const enforces = isEnforcementSite(content, m.index);
+                const site = { file: rel, line, kind: 'read', enforces };
+                row.readAt.push(site);
+                if (enforces)
+                    row.enforcedAt.push(site);
+            }
+            else if (fn === 'delete_option') {
+                row.writtenAt.push({ file: rel, line, kind: 'delete', enforces: false });
+            }
+            else {
+                row.writtenAt.push({ file: rel, line, kind: 'write', enforces: false });
+            }
+        }
+    }
+    return [...byName.values()];
+}
+// A read is an enforcement when the call is the subject of a conditional (the line
+// starts an `if (`, or `! get_option`), or a return/WP_Error appears within 200 chars.
+function isEnforcementSite(content, idx) {
+    const lineStart = content.lastIndexOf('\n', idx) + 1;
+    const before = content.slice(lineStart, idx);
+    if (/\bif\s*\(\s*!?\s*\(?\s*(?:\(bool\)\s*)?$/.test(before) || /!\s*\(?\s*(?:\(bool\)\s*)?$/.test(before)) {
+        return true;
+    }
+    const after = content.slice(idx, idx + 200);
+    return /\breturn\b|WP_Error/.test(after) && /\bif\b/.test(before + after.slice(0, 40));
 }
 // --- Scanner 10: Widgets ---
 function scanWidgets(phpFiles, contents, pluginPath) {
