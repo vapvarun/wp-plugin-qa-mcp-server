@@ -15,7 +15,7 @@
  * Tool list is the source of truth; keep it in sync with server.ts
  * switch-cases and the `wppqa_*` allow-listed names in user settings.
  */
-export const tools = [
+const allTools = [
     // ─── 1. Discovery ─────────────────────────────────────────────
     {
         name: 'wppqa_scan_plugin',
@@ -636,5 +636,49 @@ export const tools = [
             required: ['plugin_path', 'report_paths', 'output_path'],
         },
     },
+    // ─── Functional certification (the behavioural gate) ──────────
+    {
+        name: 'wppqa_certify',
+        description: 'Run the plugin\'s FUNCTIONAL certification gate against a live WordPress site and return the deterministic ledger. Unlike the wppqa_check_* tools (which analyse code and return advisory findings), this EXECUTES the plugin\'s own `wp <namespace> cert` engine: it flips every gated setting OFF then ON and proves the REST behaviour changes (catches "dead toggle" bugs — a control that saves but enforces nothing), and boots every route to prove none fatal. Returns pass/fail per entity plus HOLEs (surfaces with no oracle yet). This is the trustworthy answer to "does the feature actually work" — code quality is irrelevant if functionality is broken. Requires the plugin to expose a `cert` WP-CLI subcommand (see docs/plans/functional-certification-system.md).',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                wp_root: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress root the plugin is active on.',
+                },
+                cli_namespace: {
+                    type: 'string',
+                    description: 'The plugin\'s WP-CLI namespace, e.g. "buddynext" → runs `wp buddynext cert`.',
+                },
+                check: {
+                    type: 'string',
+                    enum: ['contract', 'boot'],
+                    description: 'Optional single check to run. Omit to run all.',
+                },
+            },
+            required: ['wp_root', 'cli_namespace'],
+        },
+    },
 ];
+// ─── Functionality-first surface (user directive 2026-06-15) ──────────────────
+// This MCP audits whether features WORK. Code quality, plugin-check, lint
+// scaffolding, advisory UX grep, and market analysis are NOISE here — they are
+// run separately and were producing findings that are not "does it function".
+// Hidden from the surface (not deleted — flip back by removing a name below).
+// The deterministic behavioural gate (wppqa_certify) and the cross-layer wiring
+// / contract / live-site / role / journey checks are the functionality core.
+const EXCLUDED_NON_FUNCTIONAL = new Set([
+    'wppqa_setup_quality', // scaffolds phpcs/phpstan/eslint configs — hygiene
+    'wppqa_run_code_checks', // runs the lint/static suite — hygiene
+    'wppqa_check_code_quality', // phpcs/phpstan/eslint/Plugin Check — done separately
+    'wppqa_security_quality_audit', // security/quality grep — hygiene
+    'wppqa_check_plugin_dev_rules', // dev-rule linting — hygiene
+    'wppqa_check_editor_layout_bias', // code-pattern smell — hygiene
+    'wppqa_check_ux', // advisory UX grep — noise (real UX = browser/journey)
+    'wppqa_check_ux_guidelines', // advisory UX guideline grep — noise
+    'wppqa_check_visual_regression', // pixel diffing — hygiene
+    'wppqa_analyze_market', // competitive/market analysis — not QA
+]);
+export const tools = allTools.filter((t) => !EXCLUDED_NON_FUNCTIONAL.has(t.name));
 //# sourceMappingURL=tools.js.map

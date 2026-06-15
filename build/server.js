@@ -29,6 +29,7 @@ import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
 import { analyzeExpectations, formatCategoryAnalysis } from './category-expectations.js';
 import { scaffoldQualityConfigs } from './quality-scaffolder.js';
 import { runAllCodeChecks, runSingleCheck } from './code-quality-checker.js';
+import { runCertify, formatCertify } from './cert-runner.js';
 import { probeRoleMatrix } from './role-matrix-prober.js';
 import { crossReferenceData } from './data-cross-reference.js';
 import { bootstrapPlan } from './plan-bootstrap.js';
@@ -160,6 +161,8 @@ export class WpPluginQaServer {
                         return this.handleAuditGetBriefing(toolArgs.plugin_path, toolArgs.site_url, toolArgs.output_dir);
                     case 'wppqa_audit_consolidate_matrix':
                         return this.handleAuditConsolidateMatrix(toolArgs.plugin_path, toolArgs.report_paths, toolArgs.output_path);
+                    case 'wppqa_certify':
+                        return this.handleCertify(toolArgs.wp_root, toolArgs.cli_namespace, toolArgs.check);
                     default:
                         return this.errorResult(`Unknown tool: ${name}`);
                 }
@@ -175,6 +178,14 @@ export class WpPluginQaServer {
             return this.errorResult('plugin_path is required');
         const manifest = this.getCachedManifest(pluginPath);
         return this.successResult(JSON.stringify(manifest, null, 2));
+    }
+    handleCertify(wpRoot, cliNamespace, check) {
+        if (!wpRoot)
+            return this.errorResult('wp_root is required');
+        if (!cliNamespace)
+            return this.errorResult('cli_namespace is required (e.g. "buddynext")');
+        const result = runCertify({ wpRoot, cliNamespace, check });
+        return this.successResult(formatCertify(result));
     }
     async handleCheckApi(pluginPath, siteUrl) {
         if (!pluginPath)

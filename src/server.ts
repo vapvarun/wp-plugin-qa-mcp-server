@@ -35,6 +35,7 @@ import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
 import { analyzeExpectations, formatCategoryAnalysis } from './category-expectations.js';
 import { scaffoldQualityConfigs } from './quality-scaffolder.js';
 import { runAllCodeChecks, runSingleCheck } from './code-quality-checker.js';
+import { runCertify, formatCertify } from './cert-runner.js';
 import { probeRoleMatrix } from './role-matrix-prober.js';
 import type { RoleProfile } from './role-matrix-prober.js';
 import { crossReferenceData } from './data-cross-reference.js';
@@ -233,6 +234,13 @@ export class WpPluginQaServer {
               toolArgs.output_path as string,
             );
 
+          case 'wppqa_certify':
+            return this.handleCertify(
+              toolArgs.wp_root as string,
+              toolArgs.cli_namespace as string,
+              toolArgs.check as string | undefined,
+            );
+
           default:
             return this.errorResult(`Unknown tool: ${name}`);
         }
@@ -247,6 +255,13 @@ export class WpPluginQaServer {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const manifest = this.getCachedManifest(pluginPath);
     return this.successResult(JSON.stringify(manifest, null, 2));
+  }
+
+  private handleCertify(wpRoot: string, cliNamespace: string, check?: string): CallToolResult {
+    if (!wpRoot) return this.errorResult('wp_root is required');
+    if (!cliNamespace) return this.errorResult('cli_namespace is required (e.g. "buddynext")');
+    const result = runCertify({ wpRoot, cliNamespace, check });
+    return this.successResult(formatCertify(result));
   }
 
   private async handleCheckApi(pluginPath: string, siteUrl: string): Promise<CallToolResult> {
