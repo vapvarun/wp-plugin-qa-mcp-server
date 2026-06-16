@@ -25,6 +25,30 @@ delete m.scannedAt;                                  // timestamp → churn
 m.pluginPath = m.header?.slug || 'plugin';           // absolute path → machine-specific
 m.generated = { generator: 'wp-plugin-qa scanner', schema: 'v3-functional' };
 
+// ── Back-compat: also emit the legacy top-level keys the onboard ecosystem
+// (graph.html, derivation checks, summaries) and older consumers read, derived
+// from the same deterministic scan. One file satisfies both worlds.
+const f = m.features || {};
+const fullRoute = (r) => '/' + String(r.namespace || '').replace(/^\/+|\/+$/g, '') + '/' + String(r.route || '').replace(/^\/+/, '');
+m.rest = {
+  namespace: f.restRoutes?.[0]?.namespace || '',
+  endpoints: (f.restRoutes || []).map((r) => ({
+    route: fullRoute(r), methods: r.methods || [], permission: r.permissionCallback || 'unknown',
+    gated_by: r.gatedBy || null, file: `${r.file}:${r.line}`,
+  })),
+};
+m.ajax = f.ajaxHandlers || [];
+m.admin_pages = (f.adminPages || []).map((a) => ({
+  page: a.slug, type: a.parentSlug ? 'submenu' : 'menu', capability: a.capability,
+  title: a.title, file: `${a.file}:${a.line}`,
+}));
+m.tables = (f.dbTables || []).map((t) => t.tableSuffix);
+m.hooks_fired = (f.hooks?.provided || []).map((h) => ({ hook: h.hookName, type: h.type, file: `${h.file}:${h.line}` }));
+m.cron = (f.cronJobs || []).map((c) => c.hook);
+m.blocks = (f.blocks || []).map((b) => b.name);
+m.shortcodes = (f.shortcodes || []).map((s) => s.tag);
+m.frontend_assets = { js: (f.frontendJs || []).map((j) => j.module), css: [] };
+
 const outDir = join(pluginPath, 'audit');
 mkdirSync(outDir, { recursive: true });
 const outFile = join(outDir, 'manifest.json');
