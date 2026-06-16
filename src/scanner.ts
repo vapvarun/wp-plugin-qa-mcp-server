@@ -768,10 +768,15 @@ export function scanFeatureGroups(
     const tpls = templates.filter((t) => t.file.includes(slug) || t.file.includes(token)).map((t) => t.file);
     const opts = optionsWiring.filter((o) => o.optionName.includes(slug) || o.optionName.includes(token)).map((o) => o.optionName);
     const admins = adminPages.filter((a) => (a.slug || '').includes(slug) || (a.title || '').toLowerCase().includes(token)).map((a) => a.slug || a.title);
+    // High-signal only: flag the "built the backend, forgot the UX" case — a feature
+    // with a real API surface AND a backend control (option/admin) but NO frontend
+    // template. Features the name-matcher can't resolve (0 surfaces) produce nothing,
+    // and backend-only features (no template by design) are not flagged unless they
+    // ALSO expose an API + a setting, which is the genuine missing-UX smell.
     const missing: string[] = [];
-    if (routes.length === 0) missing.push('api');
-    if (tpls.length === 0) missing.push('frontend');
-    if (admins.length === 0 && opts.length === 0) missing.push('backend');
+    if (routes.length > 0 && ( opts.length > 0 || admins.length > 0 ) && tpls.length === 0) {
+      missing.push('frontend');
+    }
     out.push({ slug, tier, routes, templates: tpls, options: opts, adminPages: admins, missingLayers: missing });
   }
   return out;

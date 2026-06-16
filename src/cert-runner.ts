@@ -19,7 +19,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { writeFileSync } from 'fs';
+import { writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -130,17 +130,24 @@ export function formatCertify(result: CertifyResult): string {
  * write the manifest to /tmp, then `wp eval-file engine/cert-engine.php <manifest> [oracles]`.
  * This is the path that works for all 100+ products with no per-plugin PHP.
  */
-export function runEngine(opts: { wpRoot: string; pluginPath: string; oraclesPath?: string }): CertifyResult {
-  const { wpRoot, pluginPath, oraclesPath } = opts;
+export function runEngine(opts: { wpRoot: string; pluginPath: string; oraclesPath?: string; rescan?: boolean }): CertifyResult {
+  const { wpRoot, pluginPath, oraclesPath, rescan } = opts;
   if (!wpRoot) return { ran: false, error: 'wp_root is required' };
   if (!pluginPath) return { ran: false, error: 'plugin_path is required' };
 
-  const manifest = scanPlugin(pluginPath);
-  const manifestTmp = join(tmpdir(), `cert-manifest-${process.pid}.json`);
-  writeFileSync(manifestTmp, JSON.stringify(manifest));
+  // Prefer the committed, deterministic manifest (generation decoupled from checking).
+  // Re-scan live only when asked, or when no committed manifest exists.
+  const committed = join(pluginPath, 'audit', 'manifest.json');
+  let manifestPath: string;
+  if (!rescan && existsSync(committed)) {
+    manifestPath = committed;
+  } else {
+    manifestPath = join(tmpdir(), `cert-manifest-${process.pid}.json`);
+    writeFileSync(manifestPath, JSON.stringify(scanPlugin(pluginPath)));
+  }
 
   const enginePath = join(dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'cert-engine.php');
-  const args = [`--path=${wpRoot}`, 'eval-file', enginePath, manifestTmp];
+  const args = [`--path=${wpRoot}`, 'eval-file', enginePath, manifestPath];
   if (oraclesPath) args.push(oraclesPath);
 
   let stdout = '';
