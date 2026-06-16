@@ -258,8 +258,8 @@ function scanTaxonomies(phpFiles: string[], contents: Map<string, string>, plugi
 
 function scanShortcodes(phpFiles: string[], contents: Map<string, string>, pluginPath: string): ShortcodeInfo[] {
   const shortcodes: ShortcodeInfo[] = [];
-  // Match: string callback, array callback, or closure callback
-  const pattern = /add_shortcode\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|function\s*\()/g;
+  // Match: string callback, short-array [$this,'m'], long-array array($this,'m'), or closure
+  const pattern = /add_shortcode\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|array\s*\(\s*(?:[^,]+,\s*)?['"](\w+)['"]\s*\)|function\s*\()/g;
 
   for (const file of phpFiles) {
     const content = contents.get(file) || '';
@@ -269,7 +269,7 @@ function scanShortcodes(phpFiles: string[], contents: Map<string, string>, plugi
     while ((match = pattern.exec(content)) !== null) {
       shortcodes.push({
         tag: match[1],
-        callback: match[2] || match[3] || '[closure]',
+        callback: match[2] || match[3] || match[4] || '[closure]',
         file: rel,
         line: getLineNumber(content, match.index),
       });
@@ -336,9 +336,28 @@ function scanBlocks(pluginPath: string): BlockInfo[] {
 
 // --- Scanner 6: REST Routes ---
 
+// Resolve the namespace argument of a register_rest_route() call. Handles a
+// string literal ('ns/v1'), a property ($this->namespace) or a local alias
+// ($ns = $this->namespace) by searching the same file for the namespace
+// assignment. Returns '' when it can't be resolved in-file (e.g. the property
+// is set by a base controller in another file) — the route is still counted.
+function resolveRestNamespace(arg1: string, content: string): string {
+  const t = arg1.trim();
+  const lit = t.match(/^['"]([^'"]+)['"]$/);
+  if (lit) return lit[1];
+  const propAssign = content.match(/(?:\$this->)?namespace\s*=\s*['"]([^'"]+)['"]/);
+  if (propAssign) return propAssign[1];
+  const anyNs = content.match(/['"]([a-z0-9_-]+\/v\d+)['"]/i);
+  return anyNs ? anyNs[1] : '';
+}
+
 function scanRestRoutes(phpFiles: string[], contents: Map<string, string>, pluginPath: string): RestRouteInfo[] {
   const routes: RestRouteInfo[] = [];
-  const pattern = /register_rest_route\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g;
+  // arg1 (namespace) may be a literal, a $variable, or $this->namespace — match
+  // any non-comma expression so wrapper-registered routes (controllers that
+  // extend a custom base, not WP_REST_Controller) are captured, not just the
+  // literal-namespace ones. arg2 (the route path) is always a literal.
+  const pattern = /register_rest_route\s*\(\s*([^,]+?)\s*,\s*['"]([^'"]+)['"]/g;
 
   for (const file of phpFiles) {
     const content = contents.get(file) || '';
@@ -366,7 +385,7 @@ function scanRestRoutes(phpFiles: string[], contents: Map<string, string>, plugi
       }
 
       routes.push({
-        namespace: match[1],
+        namespace: resolveRestNamespace(match[1], content),
         route: match[2],
         methods: methods.length > 0 ? methods : ['GET'],
         permissionCallback: permCallback,
@@ -454,6 +473,27 @@ function scanRestRoutes(phpFiles: string[], contents: Map<string, string>, plugi
     }
   }
 
+  // Backfill empty namespaces with the plugin's dominant REST namespace. Routes
+  // registered through a base controller carry the namespace on $this->namespace
+  // set in the base file, so the per-file resolver returns '' for them.
+  const named = routes.map((r) => r.namespace).filter((n): n is string => !!n && n !== 'unknown');
+  let dominant = '';
+  if (named.length) {
+    const counts = new Map<string, number>();
+    for (const n of named) counts.set(n, (counts.get(n) || 0) + 1);
+    dominant = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  } else {
+    for (const c of contents.values()) {
+      const m = c.match(/(?:\$this->)?namespace\s*=\s*['"]([a-z0-9_-]+\/v\d+)['"]/i);
+      if (m) { dominant = m[1]; break; }
+    }
+  }
+  if (dominant) {
+    for (const r of routes) {
+      if (!r.namespace || r.namespace === 'unknown') r.namespace = dominant;
+    }
+  }
+
   return routes;
 }
 
@@ -461,8 +501,8 @@ function scanRestRoutes(phpFiles: string[], contents: Map<string, string>, plugi
 
 function scanAjaxHandlers(phpFiles: string[], contents: Map<string, string>, pluginPath: string): AjaxHandlerInfo[] {
   const handlers: AjaxHandlerInfo[] = [];
-  // Match: string callback, array callback, or closure callback
-  const pattern = /add_action\s*\(\s*['"]wp_ajax_(nopriv_)?([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|function\s*\()/g;
+  // Match: string callback, short-array [$this,'m'], long-array array($this,'m'), or closure
+  const pattern = /add_action\s*\(\s*['"]wp_ajax_(nopriv_)?([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|array\s*\(\s*(?:[^,]+,\s*)?['"](\w+)['"]\s*\)|function\s*\()/g;
 
   const actionMap = new Map<string, { loggedIn: boolean; loggedOut: boolean; callback: string; file: string; line: number; isClosure: boolean; closureIndex: number }>();
 
@@ -474,8 +514,8 @@ function scanAjaxHandlers(phpFiles: string[], contents: Map<string, string>, plu
     while ((match = pattern.exec(content)) !== null) {
       const isNopriv = !!match[1];
       const action = match[2];
-      const callback = match[3] || match[4] || '[closure]';
-      const isClosure = !match[3] && !match[4];
+      const callback = match[3] || match[4] || match[5] || '[closure]';
+      const isClosure = !match[3] && !match[4] && !match[5];
       const line = getLineNumber(content, match.index);
 
       const existing = actionMap.get(action);
@@ -931,6 +971,21 @@ function scanDbTables(phpFiles: string[], contents: Map<string, string>, pluginP
   const tables: DbTableInfo[] = [];
   const prefixPattern = /\$wpdb->prefix\s*\.\s*['"](\w+)['"]/g;
 
+  // Detect the plugin's OWN table prefix from a base table() helper, e.g.
+  // `return $wpdb->prefix . 'lrn_pro_' . $name;`. When present, tables not
+  // sharing this prefix are referenced (cross-plugin reads), not owned, and
+  // are excluded from the owned-tables list. When absent, no filtering applies.
+  let ownPrefix = '';
+  for (const c of contents.values()) {
+    // Match a base helper that concatenates a variable name onto a literal
+    // prefix: `$wpdb->prefix . 'lrn_pro_' . $name`. The trailing `. $` anchor
+    // distinguishes a prefix from a full table-name literal, and the inner
+    // class allows underscores so the WHOLE prefix (lrn_pro_) is captured, not
+    // just the first segment (lrn_).
+    const m = c.match(/\$wpdb->prefix\s*\.\s*['"]([a-z0-9_]+_)['"]\s*\.\s*\$\w/i);
+    if (m) { ownPrefix = m[1]; break; }
+  }
+
   const seen = new Set<string>();
   const wpCoreTables = new Set([
     'posts', 'postmeta', 'options', 'users', 'usermeta',
@@ -972,7 +1027,16 @@ function scanDbTables(phpFiles: string[], contents: Map<string, string>, pluginP
     }
   }
 
-  return tables;
+  // Drop concatenation fragments (a bare prefix like `lrn_` / `lrn_pro_` from
+  // `$wpdb->prefix . 'lrn_pro_' . $name`) and, when the plugin's own prefix is
+  // known, drop referenced-but-not-owned tables (e.g. a Pro plugin reading a
+  // Free `lrn_*` table through a model).
+  return tables.filter((t) => {
+    const s = t.tableSuffix;
+    if (!s || s === ownPrefix || /_$/.test(s)) return false; // bare-prefix fragment
+    if (ownPrefix && !s.startsWith(ownPrefix)) return false;  // referenced, not owned
+    return true;
+  });
 }
 
 // --- Scanner 15: Templates ---
