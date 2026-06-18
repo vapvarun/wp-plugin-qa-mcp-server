@@ -81,15 +81,6 @@ function defineBar(): BarDef[] {
       check: (p) => anyExists(p, 'phpcs.xml', '.phpcs.xml.dist', 'phpcs.xml.dist') ? { status: 'pass', detail: 'phpcs config present' } : { status: 'missing', detail: 'no phpcs config' } },
     { id: 'phpstan', group: 'CI & Quality', label: 'PHPStan config', required: true,
       check: (p) => anyExists(p, 'phpstan.neon', 'phpstan.neon.dist') ? { status: 'pass', detail: 'phpstan config present' } : { status: 'missing', detail: 'no phpstan.neon' } },
-    { id: 'tests', group: 'CI & Quality', label: 'PHPUnit tests', required: true,
-      check: (p) => {
-        // phpunit config lives at the root OR under tests/ (tests/phpunit/phpunit.xml is common).
-        const hasConfig = anyExists(p, 'phpunit.xml', 'phpunit.xml.dist', 'tests/phpunit.xml', 'tests/phpunit.xml.dist', 'tests/phpunit/phpunit.xml', 'tests/phpunit/phpunit.xml.dist');
-        const testFiles = dirExists(join(p, 'tests')) ? findPhpFiles(join(p, 'tests')).filter((f) => /test/i.test(f)) : [];
-        if (hasConfig && testFiles.length) return { status: 'pass', detail: `${testFiles.length} test files + phpunit config` };
-        if (testFiles.length) return { status: 'fail', detail: `${testFiles.length} test files but no phpunit config` };
-        return { status: 'missing', detail: 'no tests/ with phpunit config' };
-      } },
     { id: 'ci', group: 'CI & Quality', label: 'CI pipeline (workflow or local-ci)', required: true,
       check: (p) => (dirExists(join(p, '.github', 'workflows')) || anyExists(p, 'bin/local-ci.sh')) ? { status: 'pass', detail: 'CI gate present' } : { status: 'missing', detail: 'no CI workflow / bin/local-ci.sh' } },
 

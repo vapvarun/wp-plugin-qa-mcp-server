@@ -21,7 +21,7 @@ describe('assessReadiness — the bar', () => {
       const sc = assessReadiness(root, manifest);
       assert.equal(sc.barVerdict, 'below-bar');
       assert.ok(sc.counts.missing > 0);
-      assert.ok(sc.items.find((i) => i.id === 'tests')?.status === 'missing');
+      assert.ok(sc.items.find((i) => i.id === 'qa-runbook')?.status === 'missing');
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
