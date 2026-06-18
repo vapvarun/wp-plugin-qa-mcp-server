@@ -351,6 +351,81 @@ function resolverReturnKeys(file: string): Set<string> {
 interface ContractConfig {
   whitelisted_vars?: string[];
   contracts?: Array<{ template: string; resolver: string; also_supplies?: string[] }>;
+  zero_logic?: { template_dirs?: string[]; deny?: string[]; allow_files?: string[] };
+  components?: { rules?: Array<{ name: string; scope_dirs: string[]; pattern: string; canonical?: string; hint?: string; allow_files?: string[] }> };
+}
+
+// TC1 — data-fetch signals that must NOT appear in a template (a template
+// receives pre-resolved data). Conservative defaults; a plugin extends them
+// via audit/template-contracts.json zero_logic.deny.
+const DEFAULT_ZERO_LOGIC_DENY = [
+  '\\$wpdb\\b',
+  '\\b[A-Z][A-Za-z0-9_]*::(find|find_in|where|query|create|update|delete|insert)\\s*\\(',
+];
+
+export interface HygieneFinding { file: string; line: number; rule: string; snippet: string; hint: string; }
+export interface TemplateHygiene {
+  zeroLogic: { checkedFiles: number; findings: HygieneFinding[] };
+  components: { checkedFiles: number; findings: HygieneFinding[] };
+}
+
+function readSafe(file: string): string {
+  try { return readFileSync(file, 'utf-8'); } catch { return ''; }
+}
+
+/**
+ * TC1 (zero-logic templates) + TC3 (shared-component usage). Both are config-
+ * refined and emitted as v3 manifest layers. Deterministic; findings sorted by
+ * the caller. TC1 strips comments/HTML so a $wpdb in a comment isn't flagged;
+ * TC3 matches raw lines because markup is what matters.
+ */
+export function analyzeTemplateHygiene(pluginPath: string): TemplateHygiene {
+  const config = loadConfig(pluginPath);
+
+  // TC1 — zero-logic.
+  const z = config?.zero_logic ?? {};
+  const zDirs = z.template_dirs ?? ['templates'];
+  const zAllow = new Set(z.allow_files ?? []);
+  const zRes = [...DEFAULT_ZERO_LOGIC_DENY, ...(z.deny ?? [])].map((p) => new RegExp(p));
+  const zFindings: HygieneFinding[] = [];
+  let zFiles = 0;
+  for (const dir of zDirs) {
+    for (const file of findPhpFiles(join(pluginPath, dir))) {
+      const rel = relativePath(file, pluginPath);
+      if (zAllow.has(rel)) continue;
+      zFiles++;
+      const code = stripPhpComments(blankNonPhp(readSafe(file)));
+      code.split('\n').forEach((ln, i) => {
+        for (const re of zRes) {
+          if (re.test(ln)) {
+            zFindings.push({ file: rel, line: i + 1, rule: 'zero-logic', snippet: ln.trim().slice(0, 120), hint: 'fetch data in a view-data resolver, not the template' });
+            break;
+          }
+        }
+      });
+    }
+  }
+
+  // TC3 — shared-component usage.
+  const cFindings: HygieneFinding[] = [];
+  const cFiles = new Set<string>();
+  for (const rule of config?.components?.rules ?? []) {
+    let re: RegExp;
+    try { re = new RegExp(rule.pattern); } catch { continue; }
+    const allow = new Set(rule.allow_files ?? []);
+    for (const dir of rule.scope_dirs ?? []) {
+      for (const file of findPhpFiles(join(pluginPath, dir))) {
+        const rel = relativePath(file, pluginPath);
+        if (rel === rule.canonical || allow.has(rel)) continue;
+        cFiles.add(rel);
+        readSafe(file).split('\n').forEach((ln, i) => {
+          if (re.test(ln)) cFindings.push({ file: rel, line: i + 1, rule: rule.name, snippet: ln.trim().slice(0, 120), hint: rule.hint ?? '' });
+        });
+      }
+    }
+  }
+
+  return { zeroLogic: { checkedFiles: zFiles, findings: zFindings }, components: { checkedFiles: cFiles.size, findings: cFindings } };
 }
 
 function loadConfig(pluginPath: string): ContractConfig | null {

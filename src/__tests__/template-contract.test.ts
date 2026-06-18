@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { analyzeTemplateContracts } from '../template-contract-checker.js';
+import { analyzeTemplateContracts, analyzeTemplateHygiene } from '../template-contract-checker.js';
 
 /** Write a file under root, creating parent dirs. */
 function put(root: string, rel: string, content: string): void {
@@ -142,6 +142,48 @@ $fn = static fn( string $argvar ): bool => '' !== $argvar;
   it('does not flag comment / printf / foreach / closure / HTML / URL vars', () => {
     const a = analyzeTemplateContracts(root);
     assert.equal(a.result.failed, 0, JSON.stringify(a.result.issues.map((i) => i.title)));
+  });
+});
+
+describe('analyzeTemplateHygiene — TC1 zero-logic + TC3 components', () => {
+  let root: string;
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'wppqa-tc-hygiene-'));
+    // TC1: a template that fetches data ($wpdb + Model::find) — but NOT the
+    // one inside a comment (must be ignored).
+    put(root, 'templates/widget.php', `<?php
+// $wpdb here is a comment, must be ignored
+$rows = Course::find( 1 );
+global $wpdb; $x = $wpdb->get_results( 'SELECT 1' );
+?><div class="lrn-empty-state__icon">x</div>`);
+    // TC3 canonical — must be exempt even though it contains the pattern.
+    put(root, 'includes/admin/views/partials/empty-state.php', `<?php ?><div class="lrn-empty-state__icon"></div>`);
+    // TC3 offender in admin view.
+    put(root, 'includes/admin/views/list.php', `<?php ?><a class="button">x</a>`);
+    put(root, 'audit/template-contracts.json', JSON.stringify({
+      zero_logic: { template_dirs: ['templates'] },
+      components: {
+        rules: [
+          { name: 'empty-state-inline', scope_dirs: ['templates', 'includes/admin/views'], pattern: 'lrn-empty-state__', canonical: 'includes/admin/views/partials/empty-state.php', hint: 'use shared partial' },
+          { name: 'wp-button-admin', scope_dirs: ['includes/admin/views'], pattern: 'class="button', hint: 'use .lrn-admin-btn' },
+        ],
+      },
+    }));
+  });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  it('TC1 flags $wpdb + Model::find in a template, ignores the commented one', () => {
+    const h = analyzeTemplateHygiene(root);
+    assert.equal(h.zeroLogic.findings.length, 2); // Course::find + $wpdb->get_results (the comment line is ignored)
+    assert.ok(h.zeroLogic.findings.every((f) => f.file === 'templates/widget.php'));
+  });
+
+  it('TC3 flags inline empty-state + wp button, exempts the canonical partial', () => {
+    const h = analyzeTemplateHygiene(root);
+    const files = h.components.findings.map((f) => f.file);
+    assert.ok(files.includes('templates/widget.php'));      // inline empty-state
+    assert.ok(files.includes('includes/admin/views/list.php')); // wp button
+    assert.ok(!files.includes('includes/admin/views/partials/empty-state.php')); // canonical exempt
   });
 });
 

@@ -43,3 +43,27 @@ export interface TemplateContractAnalysis {
 export declare function checkTemplateContracts(pluginPath: string): CheckerResult;
 /** Richer entry used by the v3 manifest layer: also reports the detected mode. */
 export declare function analyzeTemplateContracts(pluginPath: string): TemplateContractAnalysis;
+export interface HygieneFinding {
+    file: string;
+    line: number;
+    rule: string;
+    snippet: string;
+    hint: string;
+}
+export interface TemplateHygiene {
+    zeroLogic: {
+        checkedFiles: number;
+        findings: HygieneFinding[];
+    };
+    components: {
+        checkedFiles: number;
+        findings: HygieneFinding[];
+    };
+}
+/**
+ * TC1 (zero-logic templates) + TC3 (shared-component usage). Both are config-
+ * refined and emitted as v3 manifest layers. Deterministic; findings sorted by
+ * the caller. TC1 strips comments/HTML so a $wpdb in a comment isn't flagged;
+ * TC3 matches raw lines because markup is what matters.
+ */
+export declare function analyzeTemplateHygiene(pluginPath: string): TemplateHygiene;

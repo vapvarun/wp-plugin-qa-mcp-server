@@ -11,7 +11,7 @@
  */
 
 import { scanPlugin } from '../build/scanner.js';
-import { analyzeTemplateContracts } from '../build/template-contract-checker.js';
+import { analyzeTemplateContracts, analyzeTemplateHygiene } from '../build/template-contract-checker.js';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
@@ -64,6 +64,21 @@ m.template_contract = {
   findings: tc.result.issues
     .map((i) => ({ file: i.file, line: i.line, code: i.code, title: i.title }))
     .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.title.localeCompare(b.title)),
+};
+
+// ── v3 functional layers: TC1 zero-logic templates + TC3 shared-component
+// usage. Config-driven (audit/template-contracts.json); deterministic sort.
+const hy = analyzeTemplateHygiene(pluginPath);
+const sortFindings = (arr) => arr.slice().sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule.localeCompare(b.rule));
+m.template_zero_logic = {
+  checked_files: hy.zeroLogic.checkedFiles,
+  fail: hy.zeroLogic.findings.length,
+  findings: sortFindings(hy.zeroLogic.findings),
+};
+m.template_components = {
+  checked_files: hy.components.checkedFiles,
+  fail: hy.components.findings.length,
+  findings: sortFindings(hy.components.findings),
 };
 
 const outDir = join(pluginPath, 'audit');
