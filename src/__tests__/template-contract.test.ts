@@ -68,6 +68,41 @@ class Detail_View_Data {
   });
 });
 
+describe('analyzeTemplateContracts — filter-append resolver registration (Pro pattern)', () => {
+  let root: string;
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'wppqa-tc-append-'));
+    // Pro registers via filter callbacks that APPEND to arrays, with templates
+    // in an extension views/ dir referenced by __DIR__ (no root templates/).
+    put(root, 'includes/ext/class-extension.php', `<?php
+class Extension {
+  public function register_template_map( array $map ): array {
+    $map['widget'] = __DIR__ . '/views/widget.php';
+    return $map;
+  }
+  public function register_view_data_resolvers( array $r ): array {
+    $r['widget'] = '\\\\Acme\\\\Ext\\\\View_Data\\\\Widget_View_Data';
+    return $r;
+  }
+}`);
+    put(root, 'includes/ext/view-data/class-widget-view-data.php', `<?php
+namespace Acme\\Ext\\View_Data;
+class Widget_View_Data {
+  public static function resolve( array $d ): array { return array( 'count' => 0 ); }
+}`);
+    put(root, 'includes/ext/views/widget.php', `<?php echo (int) $count; echo esc_html( $missing ); ?>`);
+  });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  it('detects append-style registration + __DIR__ template paths and flags drift', () => {
+    const a = analyzeTemplateContracts(root);
+    assert.equal(a.mode, 'resolver');
+    assert.equal(a.checked, 1);
+    assert.equal(a.result.failed, 1);
+    assert.match(a.result.issues[0].title, /\$missing/);
+  });
+});
+
 describe('analyzeTemplateContracts — WooCommerce-style loader (regression)', () => {
   let root: string;
   before(() => {

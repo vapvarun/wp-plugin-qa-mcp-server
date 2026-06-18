@@ -33,7 +33,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import type { CheckerResult, CheckerIssue } from './types.js';
 import {
   findPhpFiles,
@@ -79,9 +79,6 @@ export function analyzeTemplateContracts(pluginPath: string): TemplateContractAn
   const startTime = Date.now();
   const issues: CheckerIssue[] = [];
 
-  const templatesDir = join(pluginPath, 'templates');
-  const hasTemplatesDir = dirExists(templatesDir);
-
   const config = loadConfig(pluginPath);
   const extraImplicit = new Set<string>([...TEMPLATE_IMPLICIT_VARS, ...(config?.whitelisted_vars ?? [])]);
 
@@ -116,8 +113,10 @@ export function analyzeTemplateContracts(pluginPath: string): TemplateContractAn
     merge(pair.template, keys, 'config', pair.resolver);
   }
 
-  // Nothing to verify (no templates, or no known convention detected): skip.
-  if (!hasTemplatesDir || contracts.size === 0) {
+  // Nothing to verify (no known loader convention detected anywhere): skip.
+  // Templates need not live in a root templates/ dir — Pro extensions register
+  // their own views/ dirs via filters, and the contract map already captured them.
+  if (contracts.size === 0) {
     return {
       mode: 'none',
       checked: 0,
@@ -245,10 +244,22 @@ interface ResolverContract {
  * Pair by routeKey; the resolver class's returned array keys are the
  * variables its template may read.
  */
+interface TemplateEntry {
+  rawPath: string;
+  /** true when the value was `__DIR__ . '/…'` — resolve against the declaring file. */
+  fromDir: boolean;
+  declaringDir: string;
+}
+
 function findResolverContracts(pluginPath: string, classIndex: Map<string, string>): ResolverContract[] {
   const resolverMap = new Map<string, string>(); // routeKey -> resolver class short name
-  const templateMap = new Map<string, string>(); // routeKey -> template file
-  const pairRe = /'([A-Za-z0-9_-]+)'\s*=>\s*'([^']+)'/g;
+  const templateMap = new Map<string, TemplateEntry>(); // routeKey -> template entry
+
+  // Match BOTH arrow literals (`'k' => 'V'`) and array-append assignments
+  // (`$x['k'] = 'V'`) — Pro registers via filter callbacks that append.
+  const keyPrefix = `(?:'([A-Za-z0-9_-]+)'\\s*=>|\\$[A-Za-z_]\\w*\\[\\s*'([A-Za-z0-9_-]+)'\\s*\\]\\s*=)`;
+  const resolverRe = new RegExp(`${keyPrefix}\\s*'(\\\\?[A-Za-z0-9_\\\\]*(?:View_Data|Loader))'`, 'g');
+  const templateRe = new RegExp(`${keyPrefix}\\s*(__DIR__\\s*\\.\\s*)?'([^']+\\.php)'`, 'g');
 
   for (const file of findPhpFiles(pluginPath)) {
     let content: string;
@@ -257,15 +268,15 @@ function findResolverContracts(pluginPath: string, classIndex: Map<string, strin
     } catch {
       continue;
     }
-    for (const m of content.matchAll(pairRe)) {
-      const key = m[1];
-      const val = m[2];
-      if (/View_Data$/.test(val) || /Loader$/.test(val)) {
-        const short = val.split('\\').filter(Boolean).pop() ?? val;
-        if (!resolverMap.has(key)) resolverMap.set(key, short);
-      } else if (/\.php$/.test(val) && !val.includes('::') && !templateMap.has(key)) {
-        templateMap.set(key, val);
-      }
+    for (const m of content.matchAll(resolverRe)) {
+      const key = m[1] ?? m[2];
+      const short = (m[3] ?? '').split('\\').filter(Boolean).pop();
+      if (key && short && !resolverMap.has(key)) resolverMap.set(key, short);
+    }
+    for (const m of content.matchAll(templateRe)) {
+      const key = m[1] ?? m[2];
+      if (!key || templateMap.has(key)) continue;
+      templateMap.set(key, { rawPath: m[4], fromDir: !!m[3], declaringDir: dirname(file) });
     }
   }
 
@@ -274,17 +285,31 @@ function findResolverContracts(pluginPath: string, classIndex: Map<string, strin
   for (const [key, shortName] of resolverMap.entries()) {
     const tpl = templateMap.get(key);
     if (!tpl) continue;
-    if (!resolveTemplatePath(pluginPath, tpl)) continue;
+    const tplPath = resolveTemplateEntry(pluginPath, tpl);
+    if (!tplPath) continue;
     const resolverFile = classIndex.get(shortName);
     if (!resolverFile) continue;
     const keys = resolverReturnKeys(resolverFile);
     if (keys.size === 0) continue;
-    const dedupe = `${tpl}::${shortName}`;
+    const rel = relativePath(tplPath, pluginPath);
+    const dedupe = `${rel}::${shortName}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
-    out.push({ templateName: tpl, keys, resolverFile: relativePath(resolverFile, pluginPath) });
+    out.push({ templateName: rel, keys, resolverFile: relativePath(resolverFile, pluginPath) });
   }
   return out;
+}
+
+/** Resolve a template-map value to a file: __DIR__-relative, templates/, or plugin-relative. */
+function resolveTemplateEntry(pluginPath: string, e: TemplateEntry): string | null {
+  const p = e.rawPath.replace(/^\/+/, '');
+  const candidates = [
+    join(e.declaringDir, p),
+    join(pluginPath, 'templates', p),
+    join(pluginPath, p),
+  ];
+  for (const c of candidates) if (fileExists(c)) return c;
+  return null;
 }
 
 /** Index `class Foo` declarations → absolute file path (first match wins). */
@@ -355,7 +380,11 @@ function collectConsumedVars(content: string): Map<string, number> {
   for (const m of content.matchAll(varRe)) {
     const name = m[1];
     if (vars.has(name)) continue;
-    vars.set(name, lineOf(content, m.index ?? 0));
+    const idx = m.index ?? 0;
+    // Skip printf positional placeholders (%1$s, %2$d, and the escaped
+    // double-quoted form %1\$s) — these are NOT genuine variable reads.
+    if (/%\d+\\?$/.test(content.slice(Math.max(0, idx - 6), idx))) continue;
+    vars.set(name, lineOf(content, idx));
   }
   return vars;
 }
