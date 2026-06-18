@@ -170,6 +170,21 @@ const allTools = [
             required: ['plugin_path'],
         },
     },
+    // ─── 8c. Readiness Scorecard ("the bar") ─────────────────────
+    {
+        name: 'wppqa_readiness',
+        description: 'Autonomous readiness scorecard — point it at any plugin and it reports what is PRESENT, MISSING, or FAILING against one portfolio standard ("the bar"), with a 0-100 score and a meets/below-bar verdict. No need to know which individual check to run: it folds the cross-layer template-contract + zero-logic checks and manifest signals together with a presence-based standards checklist (uninstall, readme+changelog, i18n, WPCS, PHPStan, PHPUnit tests, CI, REST, docs/qa runbook + qa-config, audit/manifest.json, contract-audit baseline, journeys, docs). The bar is config-driven per plugin via audit/readiness-bar.json (override which items are required, or disable items). Use to gate a release, audit a freshly cloned plugin, or hold every plugin to the same standard.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
     // ─── 9. API (live site) ───────────────────────────────────────
     {
         name: 'wppqa_check_api',

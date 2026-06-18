@@ -12,6 +12,7 @@
 
 import { scanPlugin } from '../build/scanner.js';
 import { analyzeTemplateContracts, analyzeTemplateHygiene } from '../build/template-contract-checker.js';
+import { assessReadiness } from '../build/readiness-checklist.js';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
@@ -80,6 +81,10 @@ m.template_components = {
   fail: hy.components.findings.length,
   findings: sortFindings(hy.components.findings),
 };
+
+// ── v3 readiness scorecard ("the bar"): autonomous present/missing/failing
+// checklist over the portfolio standard, with a meets/below-bar verdict.
+m.readiness = assessReadiness(pluginPath, m);
 
 const outDir = join(pluginPath, 'audit');
 mkdirSync(outDir, { recursive: true });
