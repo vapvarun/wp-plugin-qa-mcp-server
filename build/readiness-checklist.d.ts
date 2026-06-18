@@ -39,5 +39,17 @@ export interface ReadinessScorecard {
     items: ReadinessItem[];
 }
 export declare function assessReadiness(pluginPath: string, manifest: PluginManifest): ReadinessScorecard;
+/** Find plugin dirs: the root itself if it's a plugin, else its immediate subdirs. */
+export declare function discoverPlugins(root: string): string[];
+export interface PortfolioRow {
+    name: string;
+    path: string;
+    score: number;
+    barVerdict: 'meets-bar' | 'below-bar';
+    requiredGaps: string[];
+}
+/** Score every plugin under the given paths/roots; worst-first. */
+export declare function assessReadinessPortfolio(pluginPaths: string[]): PortfolioRow[];
+export declare function formatPortfolio(rows: PortfolioRow[]): string;
 /** Human-readable checklist for the wppqa_readiness tool. */
 export declare function formatReadiness(sc: ReadinessScorecard, name: string): string;

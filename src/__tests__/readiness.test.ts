@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { assessReadiness } from '../readiness-checklist.js';
+import { assessReadiness, discoverPlugins, assessReadinessPortfolio } from '../readiness-checklist.js';
 
 // Minimal manifest stub — only the fields the readiness checks read.
 const manifest: any = { header: { name: 'Fixture' }, features: { activationHooks: [], dbTables: [], restRoutes: [{ route: 'x' }], customRoles: [] } };
@@ -44,6 +44,25 @@ describe('assessReadiness — the bar', () => {
       const sc = assessReadiness(root, manifest);
       assert.equal(sc.barVerdict, 'meets-bar', JSON.stringify(sc.items.filter((i) => i.required && i.status !== 'pass')));
       assert.ok(sc.score >= 90);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('portfolio: discovers plugin dirs and ranks worst-first', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wppqa-portfolio-'));
+    try {
+      // Plugin A — bare (low score). Plugin B — fuller (higher score).
+      put(root, 'plugin-a/a.php', '<?php /* Plugin Name: A\n * Version: 1.0 */');
+      put(root, 'plugin-b/b.php', '<?php /* Plugin Name: B\n * Version: 1.0 */');
+      put(root, 'plugin-b/phpcs.xml');
+      put(root, 'plugin-b/phpstan.neon');
+      put(root, 'plugin-b/docs/qa/qa-config.json');
+      put(root, 'not-a-plugin/readme.md', 'x'); // no Plugin Name header → skipped
+      const found = discoverPlugins(root);
+      assert.equal(found.length, 2, 'finds the two plugin dirs, not the non-plugin');
+      const rows = assessReadinessPortfolio(found);
+      assert.equal(rows.length, 2);
+      assert.ok(rows[0].score <= rows[1].score, 'worst-first ordering');
+      assert.ok(rows.every((r) => typeof r.barVerdict === 'string'));
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 

@@ -13,9 +13,10 @@
  * bar" once and hold every plugin to it.
  */
 import { join } from 'path';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { fileExists, dirExists, findFilesByExt, findPhpFiles, safeReadFile } from './shared-utils.js';
 import { analyzeTemplateContracts, analyzeTemplateHygiene } from './template-contract-checker.js';
+import { scanPlugin } from './scanner.js';
 function loadBarOverride(pluginPath) {
     const p = join(pluginPath, 'audit', 'readiness-bar.json');
     if (!fileExists(p))
@@ -136,6 +137,89 @@ export function assessReadiness(pluginPath, manifest) {
         groups,
         items,
     };
+}
+// ─── Cross-portfolio monitor ───────────────────────────────────────
+/** Is dir a WordPress plugin? A root-level .php with a `Plugin Name:` header. */
+function isPluginDir(dir) {
+    let entries;
+    try {
+        entries = readdirSync(dir);
+    }
+    catch {
+        return false;
+    }
+    for (const e of entries) {
+        if (!e.endsWith('.php'))
+            continue;
+        try {
+            if (/^[\s\S]{0,8000}?Plugin Name:/i.test(readFileSync(join(dir, e), 'utf-8').slice(0, 8000)))
+                return true;
+        }
+        catch { /* ignore */ }
+    }
+    return false;
+}
+/** Find plugin dirs: the root itself if it's a plugin, else its immediate subdirs. */
+export function discoverPlugins(root) {
+    if (isPluginDir(root))
+        return [root];
+    let entries;
+    try {
+        entries = readdirSync(root);
+    }
+    catch {
+        return [];
+    }
+    const out = [];
+    for (const e of entries) {
+        if (e.startsWith('.'))
+            continue;
+        const p = join(root, e);
+        try {
+            if (statSync(p).isDirectory() && isPluginDir(p))
+                out.push(p);
+        }
+        catch { /* ignore */ }
+    }
+    return out.sort();
+}
+/** Score every plugin under the given paths/roots; worst-first. */
+export function assessReadinessPortfolio(pluginPaths) {
+    const rows = [];
+    for (const p of pluginPaths) {
+        let manifest;
+        try {
+            manifest = scanPlugin(p);
+        }
+        catch {
+            continue;
+        }
+        const sc = assessReadiness(p, manifest);
+        rows.push({
+            name: manifest.header?.name ?? p.split('/').pop() ?? p,
+            path: p,
+            score: sc.score,
+            barVerdict: sc.barVerdict,
+            requiredGaps: sc.items.filter((i) => i.required && i.status !== 'pass' && i.status !== 'n/a').map((i) => i.id),
+        });
+    }
+    return rows.sort((a, b) => a.score - b.score || a.name.localeCompare(b.name));
+}
+export function formatPortfolio(rows) {
+    if (!rows.length)
+        return 'No plugins found under the given path.';
+    const below = rows.filter((r) => r.barVerdict === 'below-bar').length;
+    const lines = [];
+    lines.push('READINESS — PORTFOLIO');
+    lines.push('='.repeat(60));
+    lines.push(`${rows.length} plugins · ${below} below bar · ${rows.length - below} meet bar`);
+    lines.push('');
+    for (const r of rows) {
+        const flag = r.barVerdict === 'below-bar' ? '✗' : '✓';
+        const gaps = r.requiredGaps.length ? `  gaps: ${r.requiredGaps.join(', ')}` : '';
+        lines.push(`  ${flag} ${String(r.score).padStart(3)}/100  ${r.name}${gaps}`);
+    }
+    return lines.join('\n');
 }
 /** Human-readable checklist for the wppqa_readiness tool. */
 export function formatReadiness(sc, name) {

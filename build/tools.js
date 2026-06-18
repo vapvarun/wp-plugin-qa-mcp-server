@@ -185,6 +185,25 @@ const allTools = [
             required: ['plugin_path'],
         },
     },
+    // ─── 8d. Readiness Portfolio Monitor ─────────────────────────
+    {
+        name: 'wppqa_readiness_portfolio',
+        description: 'Cross-portfolio readiness monitor — runs the readiness bar across MANY plugins at once and returns a ranked dashboard (worst-first) of each plugin\'s score, meets/below-bar verdict, and required gaps. Provide plugins_root (a directory such as wp-content/plugins or a repos folder — it auto-discovers every plugin under it) OR plugin_paths (an explicit list of plugin directories). Use to see at a glance which plugins are below the standard and what each is missing, so every plugin can be held to the same bar.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugins_root: {
+                    type: 'string',
+                    description: 'Absolute path to a directory containing plugins (auto-discovers each plugin subdir). Either this or plugin_paths is required.',
+                },
+                plugin_paths: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Explicit list of absolute plugin directory paths. Overrides plugins_root when provided.',
+                },
+            },
+        },
+    },
     // ─── 9. API (live site) ───────────────────────────────────────
     {
         name: 'wppqa_check_api',
