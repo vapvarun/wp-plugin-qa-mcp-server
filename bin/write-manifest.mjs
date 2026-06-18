@@ -11,6 +11,7 @@
  */
 
 import { scanPlugin } from '../build/scanner.js';
+import { analyzeTemplateContracts } from '../build/template-contract-checker.js';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
@@ -48,6 +49,22 @@ m.cron = (f.cronJobs || []).map((c) => c.hook);
 m.blocks = (f.blocks || []).map((b) => b.name);
 m.shortcodes = (f.shortcodes || []).map((s) => s.tag);
 m.frontend_assets = { js: (f.frontendJs || []).map((j) => j.module), css: [] };
+
+// ── v3 functional layer: template contract. Cross-layer loader<->template
+// drift, auto-detecting the WooCommerce-style helper AND the view-data
+// resolver convention (+ optional audit/template-contracts.json override).
+// Deterministic + churn-free: no duration, findings sorted by file:line.
+const tc = analyzeTemplateContracts(pluginPath);
+m.template_contract = {
+  mode: tc.mode,                  // wc-loader | resolver | config | mixed | none
+  checked: tc.checked,
+  pass: tc.result.passed,
+  fail: tc.result.failed,
+  skipped: tc.result.skipped,
+  findings: tc.result.issues
+    .map((i) => ({ file: i.file, line: i.line, code: i.code, title: i.title }))
+    .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.title.localeCompare(b.title)),
+};
 
 const outDir = join(pluginPath, 'audit');
 mkdirSync(outDir, { recursive: true });
