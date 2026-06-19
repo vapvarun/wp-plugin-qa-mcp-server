@@ -20,6 +20,8 @@ test('sidecar extracts functions, methods, calls, registrations, service binding
   assert.equal(method.class, 'Sample\\Widget');
   assert.ok(method.bodyHash && method.bodyHash.length === 40, 'method has sha1 bodyHash');
   assert.ok(g.calls.some((c: any) => c.toName === 'sample_helper'), 'records a direct call');
+  const helperCall = g.calls.find((c: any) => c.toName === 'sample_helper');
+  assert.equal(helperCall?.fromFqn, 'Sample\\Widget::render', 'sample_helper call is attributed to Widget::render method');
   assert.ok(g.calls.some((c: any) => c.viaService === 'feed'), 'records a service-locator call');
   assert.ok(g.registrations.some((r: any) => r.hook === 'init'), 'records add_action registration');
   assert.ok(g.serviceBindings.some((b: any) => b.id === 'feed'), 'records a service binding');

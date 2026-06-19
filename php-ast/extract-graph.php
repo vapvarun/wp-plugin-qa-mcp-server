@@ -7,16 +7,14 @@ ini_set('display_errors', '0');
 ini_set('display_startup_errors', '0');
 require __DIR__ . '/vendor/autoload.php';
 
-use PhpParser\{ParserFactory, NodeFinder, Node, PrettyPrinter, NodeTraverser, NodeVisitorAbstract};
+use PhpParser\{ParserFactory, Node, PrettyPrinter, NodeTraverser, NodeVisitorAbstract};
 use PhpParser\Node\Stmt\{Function_, ClassMethod, Class_};
 use PhpParser\Node\Expr\{FuncCall, MethodCall, StaticCall};
 
 $dirs = array_slice($argv, 1);
 $parser  = (new ParserFactory())->createForNewestSupportedVersion();
 $printer = new PrettyPrinter\Standard();
-$finder  = new NodeFinder();
-
-$out = ['symbols'=>[], 'calls'=>[], 'registrations'=>[], 'serviceBindings'=>[],
+$out =['symbols'=>[], 'calls'=>[], 'registrations'=>[], 'serviceBindings'=>[],
         'hooksFired'=>[], 'templatesLoaded'=>[], 'errors'=>[]];
 
 function rel(string $abs, string $base): string { return ltrim(substr($abs, strlen($base)), '/'); }
@@ -41,30 +39,32 @@ foreach ($dirs as $dir) {
         catch (\Throwable $e) { $out['errors'][] = ['file'=>$relf, 'message'=>$e->getMessage()]; continue; }
         if ($ast === null) continue;
 
-        // Track current namespace + class for FQNs.
-        $ns = ''; $cls = null;
         $visitor = new class($out, $relf, $printer) extends NodeVisitorAbstract {
-            public function __construct(public array &$out, public string $relf, public $printer, public string $ns='', public ?string $cls=null) {}
+            public function __construct(public array &$out, public string $relf, public $printer, public string $ns='', public ?string $cls=null, public ?string $fnFqn=null) {}
             public function enterNode(Node $n) {
                 if ($n instanceof Node\Stmt\Namespace_) $this->ns = $n->name ? $n->name->toString() : '';
                 if ($n instanceof Class_ && $n->name) $this->cls = ($this->ns ? $this->ns.'\\' : '').$n->name->toString();
                 if ($n instanceof Function_) {
+                    $fqn = ($this->ns?$this->ns.'\\':'').$n->name->toString();
                     $this->out['symbols'][] = ['kind'=>'function','name'=>$n->name->toString(),
-                        'class'=>null,'fqn'=>($this->ns?$this->ns.'\\':'').$n->name->toString(),
+                        'class'=>null,'fqn'=>$fqn,
                         'file'=>$this->relf,'line'=>$n->getStartLine(),
                         'bodyHash'=>sha1($this->printer->prettyPrint($n->stmts ?? [])),
                         'params'=>array_map(fn($p)=>$p->var->name ?? '', $n->params),'visibility'=>null,'abstract'=>false];
+                    $this->fnFqn = $fqn;
                 }
                 if ($n instanceof ClassMethod && $this->cls) {
+                    $fqn = $this->cls.'::'.$n->name->toString();
                     $this->out['symbols'][] = ['kind'=>'method','name'=>$n->name->toString(),
-                        'class'=>$this->cls,'fqn'=>$this->cls.'::'.$n->name->toString(),
+                        'class'=>$this->cls,'fqn'=>$fqn,
                         'file'=>$this->relf,'line'=>$n->getStartLine(),
                         'bodyHash'=>sha1($this->printer->prettyPrint($n->stmts ?? [])),
                         'params'=>array_map(fn($p)=>$p->var->name ?? '', $n->params),
                         'visibility'=>$n->isPublic()?'public':($n->isProtected()?'protected':'private'),
                         'abstract'=>$n->isAbstract()];
+                    $this->fnFqn = $fqn;
                 }
-                $fromFqn = $this->cls; // best-effort enclosing scope
+                $fromFqn = $this->fnFqn; // enclosing function/method FQN
                 if ($n instanceof FuncCall && $n->name instanceof Node\Name) {
                     $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$n->name->toString(),'viaService'=>null,
                         'file'=>$this->relf,'line'=>$n->getStartLine()];
@@ -99,6 +99,10 @@ foreach ($dirs as $dir) {
                     $clsName = self::firstNewClass($n->expr);
                     if ($sid!==null && $clsName!==null) $this->out['serviceBindings'][] = ['id'=>$sid,'class'=>$clsName,'file'=>$this->relf,'line'=>$n->getStartLine()];
                 }
+                return null;
+            }
+            public function leaveNode(Node $n) {
+                if ($n instanceof Function_ || $n instanceof ClassMethod) $this->fnFqn = null;
                 return null;
             }
             static function s(?Node $n): ?string { return $n instanceof Node\Scalar\String_ ? $n->value : null; }
