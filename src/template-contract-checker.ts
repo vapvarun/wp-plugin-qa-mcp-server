@@ -123,12 +123,18 @@ export function checkTemplateContracts(pluginPath: string): CheckerResult {
 
     checked++;
 
-    const consumed = collectConsumedVars(content);
-    const locallyAssigned = collectLocallyAssignedVars(content);
+    // Strip comments first: docblock `@param`/`@var` tags and prose like
+    // "Expected $args keys" are NOT variable reads. Newlines are preserved
+    // so reported line numbers stay accurate.
+    const code = stripPhpComments(content);
+    const consumed = collectConsumedVars(code);
+    const locallyAssigned = collectLocallyAssignedVars(code);
+    const guarded = collectGuardedVars(code);
 
     for (const [varName, firstLine] of consumed.entries()) {
       if (TEMPLATE_IMPLICIT_VARS.has(varName)) continue;
       if (locallyAssigned.has(varName)) continue;
+      if (guarded.has(varName)) continue;
       if (meta.keys.has(varName)) continue;
 
       issues.push({
@@ -243,7 +249,10 @@ function resolveTemplatePath(pluginPath: string, templateName: string): string |
  */
 function collectConsumedVars(content: string): Map<string, number> {
   const vars = new Map<string, number>();
-  const varRe = /\$([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+  // `(?<!\d)` skips printf positional specifiers like `%1$s` / `%2$d` inside
+  // format strings — there `$s`/`$d` are not PHP variables (no valid PHP read
+  // is ever preceded by a bare digit).
+  const varRe = /(?<!\d)\$([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
 
   for (const m of content.matchAll(varRe)) {
     const name = m[1];
@@ -266,8 +275,11 @@ function collectLocallyAssignedVars(content: string): Set<string> {
   const patterns: RegExp[] = [
     // $foo = …
     /\$([a-zA-Z_][a-zA-Z0-9_]*)\s*=(?!=)/g,
-    // foreach ( … as $value ) + foreach ( … as $key => $value )
-    /foreach\s*\([^)]*\bas\s+\$([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*=>\s*\$([a-zA-Z_][a-zA-Z0-9_]*))?/g,
+    // foreach value/key binding: match `as $value` / `as $key => $value`
+    // directly (not anchored to `foreach(`, whose arg may contain a cast
+    // like `(array)` that would truncate a `[^)]*` scan before `as`).
+    // `use Foo as Bar` imports never put a `$` after `as`, so this is safe.
+    /\bas\s+\$([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*=>\s*\$([a-zA-Z_][a-zA-Z0-9_]*))?/g,
     // for ( $i = 0; … )
     /\bfor\s*\(\s*\$([a-zA-Z_][a-zA-Z0-9_]*)\s*=/g,
     // catch ( Exception $e )
@@ -283,7 +295,121 @@ function collectLocallyAssignedVars(content: string): Set<string> {
     }
   }
 
+  // Parameters of functions / closures defined INSIDE the template (e.g.
+  // `$render = static function ( string $av, string $tone ) { … }`) are
+  // locals of that callable, not loader-supplied keys. Same for arrow-fn
+  // params and closure `use ( $x )` imports (bound from the outer scope).
+  const paramRe = /\bfunction\s*&?\s*[a-zA-Z_]*\s*\(([^)]*)\)/g;
+  // Arrow fn, with an optional return type between `)` and `=>`
+  // (e.g. `fn( string $name ): string => …`).
+  const arrowRe = /\bfn\s*\(([^)]*)\)\s*(?::\s*\??[\\\w]+\s*)?=>/g;
+  const useRe = /\buse\s*\(([^)]*)\)/g;
+  for (const re of [paramRe, arrowRe, useRe]) {
+    for (const m of content.matchAll(re)) {
+      for (const p of m[1].matchAll(/\$([a-zA-Z_][a-zA-Z0-9_]*)/g)) {
+        locals.add(p[1]);
+      }
+    }
+  }
+
   return locals;
+}
+
+/**
+ * Variables the template reads OPTIONALLY — guarded by `isset($v)`,
+ * `empty($v)`, or null-coalesce `$v ??`. A guard is the author explicitly
+ * declaring the key optional, so a missing loader key is by-design, not
+ * drift. These must be excluded from the required-contract check.
+ */
+function collectGuardedVars(content: string): Set<string> {
+  const guarded = new Set<string>();
+  const varInside = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+
+  // isset( … ) / empty( … ) — may hold several vars and array accesses.
+  for (const m of content.matchAll(/\b(?:isset|empty)\s*\(([^)]*)\)/g)) {
+    for (const v of m[1].matchAll(varInside)) guarded.add(v[1]);
+  }
+  // $v ?? …  and  $v ??= … (left operand is the optional read).
+  for (const m of content.matchAll(/\$([a-zA-Z_][a-zA-Z0-9_]*)\s*\?\?/g)) {
+    guarded.add(m[1]);
+  }
+
+  return guarded;
+}
+
+/**
+ * Replace PHP comment bodies with spaces (newlines preserved so line
+ * numbers stay accurate) while respecting single/double-quoted strings.
+ * Strips block comments (incl. docblocks) and `//` / `#` line comments so
+ * `@param`/`@var` tags and prose are never mistaken for variable reads.
+ */
+function stripPhpComments(content: string): string {
+  let out = '';
+  let inSingle = false;
+  let inDouble = false;
+  const n = content.length;
+  for (let i = 0; i < n; i++) {
+    const ch = content[i];
+    const next = i + 1 < n ? content[i + 1] : '';
+
+    if (inSingle) {
+      if (ch === '\\') {
+        out += ch + next;
+        i++;
+        continue;
+      }
+      if (ch === "'") inSingle = false;
+      out += ch;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '\\') {
+        out += ch + next;
+        i++;
+        continue;
+      }
+      if (ch === '"') inDouble = false;
+      out += ch;
+      continue;
+    }
+
+    if (ch === "'") {
+      inSingle = true;
+      out += ch;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      out += ch;
+      continue;
+    }
+
+    // Block comment /* … */ (covers docblocks /** … */).
+    if (ch === '/' && next === '*') {
+      out += '  ';
+      i += 2;
+      while (i < n && !(content[i] === '*' && content[i + 1] === '/')) {
+        out += content[i] === '\n' ? '\n' : ' ';
+        i++;
+      }
+      out += '  '; // consume the closing */
+      i++; // for-loop adds the second char
+      continue;
+    }
+
+    // Line comment // … or # … (to end of line).
+    if ((ch === '/' && next === '/') || ch === '#') {
+      while (i < n && content[i] !== '\n') {
+        out += ' ';
+        i++;
+      }
+      if (i < n) out += '\n';
+      continue;
+    }
+
+    out += ch;
+  }
+  return out;
 }
 
 function findMatchingCloser(content: string, start: number, open: string, close: string): number {
