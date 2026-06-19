@@ -15,4 +15,12 @@ test('builds a graph over the BN free repo with routes, functions, templates', (
     nodes.some(n => n.kind === 'function' && n.name === 'buddynext_get_template'),
     'buddynext_get_template found (buddynext.php was scanned)',
   );
+  assert.ok(
+    Object.values(g.nodes).some(
+      n => (n.kind === 'method' || n.kind === 'function') &&
+           typeof (n as any).file === 'string' &&
+           (n as any).file.startsWith('includes/'),
+    ),
+    'method/function file paths are repo-root-relative (start with includes/)',
+  );
 });

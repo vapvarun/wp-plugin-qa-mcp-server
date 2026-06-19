@@ -12,7 +12,14 @@ use PhpParser\{ParserFactory, Node, PrettyPrinter, NodeTraverser, NodeVisitorAbs
 use PhpParser\Node\Stmt\{Function_, ClassMethod, Class_};
 use PhpParser\Node\Expr\{FuncCall, MethodCall, StaticCall};
 
-$args = array_slice($argv, 1);
+$rawArgs = array_slice($argv, 1);
+// Optional leading --root=<abs> sets the base for rel() for ALL subsequent dir/file args.
+$rootBase = null;
+if (count($rawArgs) > 0 && str_starts_with($rawArgs[0], '--root=')) {
+    $rootBase = rtrim(substr($rawArgs[0], strlen('--root=')), '/');
+    $rawArgs = array_slice($rawArgs, 1);
+}
+$args = $rawArgs;
 $parser  = (new ParserFactory())->createForNewestSupportedVersion();
 $printer = new PrettyPrinter\Standard();
 $out =['symbols'=>[], 'calls'=>[], 'registrations'=>[], 'serviceBindings'=>[],
@@ -120,15 +127,17 @@ foreach ($args as $entry) {
     if (is_file($entry)) {
         // Single PHP file passed directly — process just this one file.
         if (pathinfo($entry, PATHINFO_EXTENSION) === 'php') {
-            processPhpFile($entry, dirname($entry), $out, $parser, $printer);
+            $base = $rootBase !== null ? $rootBase : dirname($entry);
+            processPhpFile($entry, $base, $out, $parser, $printer);
         }
         continue;
     }
     // Directory — scan recursively.
+    $base = $rootBase !== null ? $rootBase : $entry;
     $rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($entry, FilesystemIterator::SKIP_DOTS));
     foreach ($rii as $f) {
         if ($f->getExtension() !== 'php') continue;
-        processPhpFile($f->getPathname(), $entry, $out, $parser, $printer);
+        processPhpFile($f->getPathname(), $base, $out, $parser, $printer);
     }
 }
 echo json_encode($out);

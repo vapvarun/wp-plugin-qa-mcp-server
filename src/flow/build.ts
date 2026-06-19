@@ -30,18 +30,21 @@ function isDir(p: string): boolean {
  *               PHP extension-load warnings that would corrupt JSON stdout.
  * Adjustment C: only pass dirs and .php files — skip non-PHP files like theme.json.
  */
-function runSidecar(entries: string[]): PhpFacts {
+function runSidecar(entries: string[], repoRoot?: string): PhpFacts {
   const sidecarArgs = entries.filter(e => isDir(e) || (isFile(e) && e.endsWith('.php')));
   if (sidecarArgs.length === 0) {
     return { symbols: [], calls: [], registrations: [], serviceBindings: [],
              hooksFired: [], templatesLoaded: [], errors: [] };
   }
+  const rootArgs = repoRoot ? [`--root=${repoRoot}`] : [];
   const out = execFileSync(
     'php',
-    ['-d', 'display_errors=0', '-d', 'display_startup_errors=0', SIDECAR, ...sidecarArgs],
+    ['-d', 'display_errors=0', '-d', 'display_startup_errors=0', SIDECAR, ...rootArgs, ...sidecarArgs],
     { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 },
   );
-  return JSON.parse(out) as PhpFacts;
+  const jsonStart = out.indexOf('{');
+  if (jsonStart === -1) throw new Error(`PHP sidecar produced no JSON. Raw head:\n${out.slice(0, 500)}`);
+  return JSON.parse(out.slice(jsonStart)) as PhpFacts;
 }
 
 /**
@@ -68,7 +71,7 @@ export function buildGraph(opts: { freeRoot: string; proRoot?: string; generated
   for (const [repo, root] of repos) {
     const { includeDirs } = resolveScanScope(root);
     // Ingest PHP facts from both dirs and top-level .php files.
-    ingestPhpFacts(g, runSidecar(includeDirs), repo);
+    ingestPhpFacts(g, runSidecar(includeDirs, root), repo);
     // Add REST routes from audit/manifest.json and JS consumers from assets/.
     addRestRoutes(g, root, repo);
     addJsConsumers(g, root, repo);
