@@ -2,6 +2,10 @@
 
 **Scope:** reusable instructions only — applicable to ANY plugin. No per-effort task backlog here. Each plugin's concrete findings + fix tasks live in that plugin's own `audit/FLOW-AUDIT-TODO.md` (e.g. `buddynext/audit/FLOW-AUDIT-TODO.md`).
 
+## The bar
+
+Every checker emits only high-confidence, actionable findings with a concrete fix. Suppress likely-false-positives via name-reference floors, comment-stripping, trivial-body thresholds, and response-var scoping even at the cost of recall. A finding that a human or AI must triage to decide whether it is real is a tool failure, not a finding. NEVER emit candidate piles or "N issues, triage them."
+
 ## What this is
 A semantic data-flow audit suite (FlowGraph + PHP-AST sidecar + 8 checkers): `src/flow/`, `php-ast/extract-graph.php`, `src/*-checker.ts`, runner `src/flow-audit.ts` + CLI `src/flow-audit-cli.ts`. Design/plan: `docs/superpowers/specs|plans/2026-06-19-flow-audit-skeleton*`.
 

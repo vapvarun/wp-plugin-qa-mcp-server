@@ -2,6 +2,9 @@ import type { CheckerResult, CheckerIssue, FlowGraph, FlowNode } from './types.j
 
 // SHA-1 of the empty string — empty __construct / abstract stub bodies all hash to this.
 const EMPTY_BODY_HASH = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+// Bodies this short (≤ ~2-3 lines, e.g. `return true;` stubs) are trivial and
+// not worth consolidating even when identical — skip the whole cluster.
+const TRIVIAL_BODY = 80;
 
 export function checkDupFunctions(g: FlowGraph): CheckerResult {
   const start = Date.now();
@@ -18,6 +21,8 @@ export function checkDupFunctions(g: FlowGraph): CheckerResult {
     if (members.length < 2) continue;
     // Skip empty-body stubs: sha1('') clusters are abstract/empty-__construct false positives.
     if (hash === EMPTY_BODY_HASH) continue;
+    // Skip trivial stubs: every member has a short body (≤2-3 lines, e.g. `return true;`).
+    if (members.every(m => ((m.meta?.bodyLen as number) ?? 0) < TRIVIAL_BODY)) continue;
     // Exclude same-short-name method override families (legitimate Free/Pro override).
     const shorts = new Set(members.map(m => m.meta?.short as string));
     const allMethods = members.every(m => m.kind === 'method');

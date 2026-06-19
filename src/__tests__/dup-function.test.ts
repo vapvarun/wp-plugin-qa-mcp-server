@@ -6,9 +6,9 @@ import { checkDupFunctions } from '../dup-function-checker.js';
 
 test('flags two functions with identical body hash', () => {
   const g = emptyGraph({ free: '/free' }, 't');
-  addNode(g, { id: nodeId('function','a_initials'), kind:'function', name:'a_initials', file:'a.php', line:1, repo:'free', meta:{ bodyHash:'SAME', short:'a_initials' } });
-  addNode(g, { id: nodeId('function','b_initials'), kind:'function', name:'b_initials', file:'b.php', line:1, repo:'free', meta:{ bodyHash:'SAME', short:'b_initials' } });
-  addNode(g, { id: nodeId('function','c_unique'), kind:'function', name:'c_unique', file:'c.php', line:1, repo:'free', meta:{ bodyHash:'OTHER', short:'c_unique' } });
+  addNode(g, { id: nodeId('function','a_initials'), kind:'function', name:'a_initials', file:'a.php', line:1, repo:'free', meta:{ bodyHash:'SAME', short:'a_initials', bodyLen: 120 } });
+  addNode(g, { id: nodeId('function','b_initials'), kind:'function', name:'b_initials', file:'b.php', line:1, repo:'free', meta:{ bodyHash:'SAME', short:'b_initials', bodyLen: 120 } });
+  addNode(g, { id: nodeId('function','c_unique'), kind:'function', name:'c_unique', file:'c.php', line:1, repo:'free', meta:{ bodyHash:'OTHER', short:'c_unique', bodyLen: 120 } });
   const r = checkDupFunctions(g);
   assert.equal(r.failed, 1, 'one dup cluster');
   assert.match(r.issues[0].message, /a_initials|b_initials/);
@@ -26,8 +26,8 @@ test('excludes Free/Pro override family (same short name, same bodyHash, both me
 test('flags two methods with same bodyHash but different short names', () => {
   const g = emptyGraph({ free: '/free' }, 't');
   // Same bodyHash but different short names — NOT an override family, should still be flagged.
-  addNode(g, { id: nodeId('method','ClassA::alpha'), kind:'method', name:'ClassA::alpha', file:'a.php', line:5, repo:'free', meta:{ bodyHash:'SHARED_HASH', short:'alpha' } });
-  addNode(g, { id: nodeId('method','ClassB::beta'), kind:'method', name:'ClassB::beta', file:'b.php', line:5, repo:'free', meta:{ bodyHash:'SHARED_HASH', short:'beta' } });
+  addNode(g, { id: nodeId('method','ClassA::alpha'), kind:'method', name:'ClassA::alpha', file:'a.php', line:5, repo:'free', meta:{ bodyHash:'SHARED_HASH', short:'alpha', bodyLen: 150 } });
+  addNode(g, { id: nodeId('method','ClassB::beta'), kind:'method', name:'ClassB::beta', file:'b.php', line:5, repo:'free', meta:{ bodyHash:'SHARED_HASH', short:'beta', bodyLen: 150 } });
   const r = checkDupFunctions(g);
   assert.equal(r.failed, 1, 'different short names with same hash must be flagged');
 });
@@ -45,8 +45,24 @@ test('excludes cluster where all nodes have empty-body hash (empty __construct /
 
 test('still flags cluster with a real shared non-empty hash', () => {
   const g = emptyGraph({ free: '/free' }, 't');
-  addNode(g, { id: nodeId('function','fn_x'), kind:'function', name:'fn_x', file:'x.php', line:1, repo:'free', meta:{ bodyHash:'abc123def456', short:'fn_x' } });
-  addNode(g, { id: nodeId('function','fn_y'), kind:'function', name:'fn_y', file:'y.php', line:1, repo:'free', meta:{ bodyHash:'abc123def456', short:'fn_y' } });
+  addNode(g, { id: nodeId('function','fn_x'), kind:'function', name:'fn_x', file:'x.php', line:1, repo:'free', meta:{ bodyHash:'abc123def456', short:'fn_x', bodyLen: 200 } });
+  addNode(g, { id: nodeId('function','fn_y'), kind:'function', name:'fn_y', file:'y.php', line:1, repo:'free', meta:{ bodyHash:'abc123def456', short:'fn_y', bodyLen: 200 } });
   const r = checkDupFunctions(g);
   assert.equal(r.failed, 1, 'real shared hash must still be flagged');
+});
+
+test('skips cluster where every member has trivial bodyLen (<80)', () => {
+  const g = emptyGraph({ free: '/free' }, 't');
+  addNode(g, { id: nodeId('method','A::isEnabled'), kind:'method', name:'A::isEnabled', file:'a.php', line:1, repo:'free', meta:{ bodyHash:'STUB_HASH', short:'isEnabled', bodyLen: 12 } });
+  addNode(g, { id: nodeId('method','B::isEnabled'), kind:'method', name:'B::isEnabled', file:'b.php', line:1, repo:'free', meta:{ bodyHash:'STUB_HASH', short:'isEnabled', bodyLen: 12 } });
+  const r = checkDupFunctions(g);
+  assert.equal(r.failed, 0, 'trivial bodyLen cluster must not be flagged');
+});
+
+test('flags cluster where at least one member has bodyLen >= 80', () => {
+  const g = emptyGraph({ free: '/free' }, 't');
+  addNode(g, { id: nodeId('function','fn_big_x'), kind:'function', name:'fn_big_x', file:'x.php', line:1, repo:'free', meta:{ bodyHash:'BIG_HASH', short:'fn_big_x', bodyLen: 300 } });
+  addNode(g, { id: nodeId('function','fn_big_y'), kind:'function', name:'fn_big_y', file:'y.php', line:1, repo:'free', meta:{ bodyHash:'BIG_HASH', short:'fn_big_y', bodyLen: 300 } });
+  const r = checkDupFunctions(g);
+  assert.equal(r.failed, 1, 'non-trivial bodyLen cluster must be flagged');
 });

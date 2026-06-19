@@ -1,19 +1,25 @@
 import { addNode, addEdge, nodeId } from './graph.js';
 import type { FlowGraph } from '../types.js';
 
-export interface PhpSymbol { kind:'function'|'method'; name:string; class:string|null; fqn:string; file:string; line:number; bodyHash:string; params:string[]; visibility:string|null; abstract:boolean; }
+export interface PhpSymbol { kind:'function'|'method'; name:string; class:string|null; fqn:string; file:string; line:number; bodyHash:string; bodyLen:number; params:string[]; visibility:string|null; abstract:boolean; }
 export interface PhpCall { fromFqn:string|null; toName:string; viaService:string|null; file:string; line:number; }
 export interface PhpReg { hook:string; callback:string; mechanism:string; file:string; line:number; }
 export interface PhpBind { id:string; class:string; file:string; line:number; }
-export interface PhpFacts { symbols:PhpSymbol[]; calls:PhpCall[]; registrations:PhpReg[]; serviceBindings:PhpBind[]; hooksFired:{hook:string;file:string;line:number}[]; templatesLoaded:{template:string;argKeys:string[];file:string;line:number}[]; errors:{file:string;message:string}[]; }
+export interface PhpFacts { symbols:PhpSymbol[]; calls:PhpCall[]; registrations:PhpReg[]; serviceBindings:PhpBind[]; hooksFired:{hook:string;file:string;line:number}[]; templatesLoaded:{template:string;argKeys:string[];file:string;line:number}[]; errors:{file:string;message:string}[]; referencedNames?:string[]; }
 
 export function ingestPhpFacts(g: FlowGraph, facts: PhpFacts, repo: 'free'|'pro'): void {
+  // 0. Merge referencedNames from sidecar into graph (deduplicated union).
+  if (facts.referencedNames && facts.referencedNames.length > 0) {
+    const existing = new Set(g.referencedNames ?? []);
+    for (const n of facts.referencedNames) existing.add(n);
+    g.referencedNames = Array.from(existing).sort();
+  }
   // 1. Symbols → function/method nodes (keyed by fqn; meta carries bodyHash for dup).
   const methodByShortName = new Map<string, string[]>(); // short method name -> [fqn]
   for (const s of facts.symbols) {
     const id = nodeId(s.kind, s.fqn);
     addNode(g, { id, kind: s.kind, name: s.fqn, file: s.file, line: s.line, repo,
-      meta: { bodyHash: s.bodyHash, params: s.params, class: s.class, visibility: s.visibility, abstract: s.abstract, short: s.name } });
+      meta: { bodyHash: s.bodyHash, bodyLen: s.bodyLen ?? 0, params: s.params, class: s.class, visibility: s.visibility, abstract: s.abstract, short: s.name } });
     if (s.kind === 'method') {
       const arr = methodByShortName.get(s.name) ?? []; arr.push(s.fqn); methodByShortName.set(s.name, arr);
     }

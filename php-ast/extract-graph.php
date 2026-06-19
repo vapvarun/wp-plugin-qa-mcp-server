@@ -24,7 +24,7 @@ $args = $rawArgs;
 $parser  = (new ParserFactory())->createForNewestSupportedVersion();
 $printer = new PrettyPrinter\Standard();
 $out =['symbols'=>[], 'calls'=>[], 'registrations'=>[], 'serviceBindings'=>[],
-        'hooksFired'=>[], 'templatesLoaded'=>[], 'errors'=>[]];
+        'hooksFired'=>[], 'templatesLoaded'=>[], 'errors'=>[], 'referencedNames'=>[]];
 
 function rel(string $abs, string $base): string { return ltrim(substr($abs, strlen($base)), '/'); }
 
@@ -46,25 +46,31 @@ function processPhpFile(string $abs, string $base, array &$out, $parser, $printe
     if ($ast === null) return;
 
     $visitor = new class($out, $relf, $printer) extends NodeVisitorAbstract {
-        public function __construct(public array &$out, public string $relf, public $printer, public string $ns='', public ?string $cls=null, public ?string $fnFqn=null) {}
+        /** @var array<string,true> */
+    private array $refNames = [];
+    public function __construct(public array &$out, public string $relf, public $printer, public string $ns='', public ?string $cls=null, public ?string $fnFqn=null) {}
+    private function addRef(string $name): void { $this->refNames[$name] = true; }
+    public function getRefNames(): array { return array_keys($this->refNames); }
         public function enterNode(Node $n) {
             if ($n instanceof Node\Stmt\Namespace_) $this->ns = $n->name ? $n->name->toString() : '';
             if ($n instanceof Class_ && $n->name) $this->cls = ($this->ns ? $this->ns.'\\' : '').$n->name->toString();
             if ($n instanceof Function_) {
                 $fqn = ($this->ns?$this->ns.'\\':'').$n->name->toString();
+                $body = $this->printer->prettyPrint($n->stmts ?? []);
                 $this->out['symbols'][] = ['kind'=>'function','name'=>$n->name->toString(),
                     'class'=>null,'fqn'=>$fqn,
                     'file'=>$this->relf,'line'=>$n->getStartLine(),
-                    'bodyHash'=>sha1($this->printer->prettyPrint($n->stmts ?? [])),
+                    'bodyHash'=>sha1($body),'bodyLen'=>strlen($body),
                     'params'=>array_map(fn($p)=>$p->var->name ?? '', $n->params),'visibility'=>null,'abstract'=>false];
                 $this->fnFqn = $fqn;
             }
             if ($n instanceof ClassMethod && $this->cls) {
                 $fqn = $this->cls.'::'.$n->name->toString();
+                $body = $this->printer->prettyPrint($n->stmts ?? []);
                 $this->out['symbols'][] = ['kind'=>'method','name'=>$n->name->toString(),
                     'class'=>$this->cls,'fqn'=>$fqn,
                     'file'=>$this->relf,'line'=>$n->getStartLine(),
-                    'bodyHash'=>sha1($this->printer->prettyPrint($n->stmts ?? [])),
+                    'bodyHash'=>sha1($body),'bodyLen'=>strlen($body),
                     'params'=>array_map(fn($p)=>$p->var->name ?? '', $n->params),
                     'visibility'=>$n->isPublic()?'public':($n->isProtected()?'protected':'private'),
                     'abstract'=>$n->isAbstract()];
@@ -72,11 +78,32 @@ function processPhpFile(string $abs, string $base, array &$out, $parser, $printe
             }
             $fromFqn = $this->fnFqn; // enclosing function/method FQN
             if ($n instanceof FuncCall && $n->name instanceof Node\Name) {
-                $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$n->name->toString(),'viaService'=>null,
+                $callName = $n->name->toString();
+                $this->addRef($callName);
+                $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$callName,'viaService'=>null,
                     'file'=>$this->relf,'line'=>$n->getStartLine()];
                 $fn = $n->name->toString();
                 if (in_array($fn, ['add_action','add_filter'], true) && isset($n->args[0],$n->args[1])) {
-                    $hook = self::s($n->args[0]->value); $cb = self::cb($n->args[1]->value);
+                    $hook = self::s($n->args[0]->value);
+                    $cbArg = $n->args[1]->value;
+                    $cb = null;
+                    // Resolve [$this, 'method'] → 'CurrentClass::method' using enclosing class
+                    if ($cbArg instanceof Node\Expr\Array_ && count($cbArg->items) === 2) {
+                        $firstEl = $cbArg->items[0]->value;
+                        $isThis = $firstEl instanceof Node\Expr\Variable && $firstEl->name === 'this';
+                        $methStr = self::s($cbArg->items[1]->value);
+                        if ($isThis && $methStr !== null && $this->cls !== null) {
+                            $cb = $this->cls . '::' . $methStr;
+                        } else {
+                            $cb = self::cb($cbArg);
+                        }
+                        if ($methStr !== null && preg_match('/^[a-zA-Z_]\w*$/', $methStr)) $this->addRef($methStr);
+                    } else {
+                        $cb = self::cb($cbArg);
+                        // Collect string-literal callbacks
+                        $cbStr = self::s($cbArg);
+                        if ($cbStr !== null && preg_match('/^[a-zA-Z_]\w*$/', $cbStr)) $this->addRef($cbStr);
+                    }
                     if ($hook!==null) $this->out['registrations'][] = ['hook'=>$hook,'callback'=>$cb??'','mechanism'=>$fn,'file'=>$this->relf,'line'=>$n->getStartLine()];
                 }
                 if (in_array($fn, ['do_action','apply_filters'], true) && isset($n->args[0])) {
@@ -96,32 +123,41 @@ function processPhpFile(string $abs, string $base, array &$out, $parser, $printe
                 && isset($n->var->args[0])) {
                 $sid = self::s($n->var->args[0]->value);
                 $m = $n->name instanceof Node\Identifier ? $n->name->toString() : null;
+                if ($m !== null) $this->addRef($m);
                 if ($sid!==null) $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$m??'','viaService'=>$sid,'file'=>$this->relf,'line'=>$n->getStartLine()];
             }
             // $this->method() — precise resolution when inside a class
             elseif ($n instanceof MethodCall && $n->var instanceof Node\Expr\Variable
                 && $n->var->name === 'this' && $this->cls !== null
                 && $n->name instanceof Node\Identifier) {
-                $toName = $this->cls . '::' . $n->name->toString();
+                $mName = $n->name->toString();
+                $this->addRef($mName);
+                $toName = $this->cls . '::' . $mName;
                 $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$toName,'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
             }
             // General $obj->method() — bare method name, best-effort resolution downstream
             elseif ($n instanceof MethodCall && $n->name instanceof Node\Identifier) {
-                $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$n->name->toString(),'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
+                $mName = $n->name->toString();
+                $this->addRef($mName);
+                $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$mName,'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
             }
             // StaticCall: self::method() / static::method() — resolve to enclosing class
             if ($n instanceof StaticCall && $n->name instanceof Node\Identifier
                 && $n->class instanceof Node\Name
                 && in_array($n->class->toString(), ['self','static'], true)
                 && $this->cls !== null) {
-                $toName = $this->cls . '::' . $n->name->toString();
+                $mName = $n->name->toString();
+                $this->addRef($mName);
+                $toName = $this->cls . '::' . $mName;
                 $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$toName,'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
             }
             // StaticCall: ClassName::method() — best-effort (aliased/short name)
             elseif ($n instanceof StaticCall && $n->name instanceof Node\Identifier
                 && $n->class instanceof Node\Name
                 && !in_array($n->class->toString(), ['self','static','parent'], true)) {
-                $toName = $n->class->toString() . '::' . $n->name->toString();
+                $mName = $n->name->toString();
+                $this->addRef($mName);
+                $toName = $n->class->toString() . '::' . $mName;
                 $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$toName,'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
             }
             // Service binding: $services['id'] = ... new Class / fn()=>new Class
@@ -130,6 +166,10 @@ function processPhpFile(string $abs, string $base, array &$out, $parser, $printe
                 $sid = self::s($n->var->dim);
                 $clsName = self::firstNewClass($n->expr);
                 if ($sid!==null && $clsName!==null) $this->out['serviceBindings'][] = ['id'=>$sid,'class'=>$clsName,'file'=>$this->relf,'line'=>$n->getStartLine()];
+            }
+            // Collect any string literal that looks like an identifier (e.g. 'my_callback') — safe over-collection
+            if ($n instanceof Node\Scalar\String_ && preg_match('/^[a-zA-Z_]\w*$/', $n->value)) {
+                $this->addRef($n->value);
             }
             return null;
         }
@@ -147,6 +187,8 @@ function processPhpFile(string $abs, string $base, array &$out, $parser, $printe
         }
     };
     $trav = new NodeTraverser(); $trav->addVisitor(new NameResolver()); $trav->addVisitor($visitor); $trav->traverse($ast);
+    // Merge this file's referenced names into the global set
+    foreach ($visitor->getRefNames() as $name) { $out['referencedNames'][$name] = true; }
 }
 
 foreach ($args as $entry) {
@@ -167,4 +209,7 @@ foreach ($args as $entry) {
         processPhpFile($f->getPathname(), $base, $out, $parser, $printer);
     }
 }
+$refKeys = array_keys($out['referencedNames']);
+sort($refKeys);
+$out['referencedNames'] = $refKeys;
 echo json_encode($out);
