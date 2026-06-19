@@ -37,52 +37,79 @@ export function extractShapeKeys(php: string): string[] {
   return [...keys];
 }
 
-// Best-effort: matches any obj.prop near the route URL (not only the response
-// variable), so Task 10 must treat broken-read findings as candidates to verify,
-// not certainties.
+// Wrapper-key props emitted by WP REST (data/error/message/code) are response
+// envelope fields, not endpoint shape keys — suppress them.
+const WRAPPER_KEYS = new Set(['data', 'error', 'message', 'code']);
+
+// Scoped: returns ONLY property reads on the JSON response binding found near
+// the route URL. If no response binding is identified in the window, returns []
+// rather than guessing. This trades recall for precision — no false positives
+// from DOM/JS-API calls that happen to sit near the fetch.
 export function extractJsReads(js: string, routeUrl: string): string[] {
   const idx = js.indexOf(routeUrl);
   if (idx < 0) return [];
   const start = Math.max(0, idx - 2000), end = Math.min(js.length, idx + 4000);
   const segment = js.slice(start, end);
-  const noise = new Set([
-    // existing
-    'then', 'json', 'catch', 'map', 'forEach', 'length', 'data', 'error', 'message', 'code',
-    // fetch / Response
-    'status', 'statusText', 'ok', 'headers', 'text', 'blob',
-    // event
-    'target', 'currentTarget', 'preventDefault', 'stopPropagation',
-    // element / DOM
-    'value', 'name', 'id', 'style', 'classList', 'dataset', 'textContent', 'innerHTML',
-    'getAttribute', 'setAttribute', 'querySelector', 'querySelectorAll',
-    'addEventListener', 'removeEventListener',
-    'parentNode', 'children', 'closest', 'append', 'remove', 'focus', 'blur',
-    // DOM attr/prop mutations
-    'hasAttribute', 'removeAttribute', 'disabled', 'checked',
-    // Location / navigation
-    'replace', 'assign', 'reload', 'location', 'hash', 'search', 'host', 'href',
-    // Tree traversal / mutation
-    'parentElement', 'nextElementSibling', 'previousElementSibling',
-    'insertBefore', 'appendChild', 'removeChild', 'contains', 'matches',
-    // Geometry / cloning
-    'scrollIntoView', 'getBoundingClientRect', 'cloneNode',
-    // Math
-    'floor', 'ceil', 'round', 'abs',
-    // Object / Array
-    'keys', 'values', 'entries', 'from',
-    'push', 'pop', 'shift', 'slice', 'splice', 'filter', 'find',
-    'includes', 'indexOf', 'join', 'split', 'trim',
-    'toString', 'hasOwnProperty',
-    // Promise
-    'resolve', 'reject', 'all',
-    // console
-    'log', 'warn',
-  ]);
+
+  // 1. Destructure pattern: .then(({a, b, c}) => ...) — keys ARE the reads.
+  const destructureMatch = segment.match(/\.then\s*\(\s*\(\s*\{([^}]+)\}\s*\)/);
+  if (destructureMatch) {
+    const keys = destructureMatch[1]
+      .split(',')
+      .map(k => k.trim().replace(/:.*$/, '').trim())  // handle {key: alias}
+      .filter(k => /^[a-zA-Z_][\w]*$/.test(k) && !WRAPPER_KEYS.has(k));
+    return [...new Set(keys)];
+  }
+
+  // 2. Promise chain: .then(NAME => ...) or .then(function(NAME){...})
+  //    — response var is NAME in the SECOND .then (after .json()).
+  // 3. Await: const|let|var NAME = await <expr>.json() or = await apiFetch(...)
+  //    Checked before chain so `const res = await fetch(...).then(r=>r.json())`
+  //    binds to `res` (the JSON holder) not `r` (the raw Response).
+  const awaitVar = resolveAwaitVar(segment);
+
+  const chainVar = awaitVar ? null : resolveChainVar(segment);
+
+  const responseVar = awaitVar ?? chainVar;
+  if (!responseVar) return [];  // no binding found → don't guess
+
+  // Collect NAME.prop, NAME?.prop, NAME['prop'] on the response var.
   const props = new Set<string>();
-  for (const m of segment.matchAll(/\b[a-zA-Z_$][\w$]*\.([a-zA-Z_][\w]*)\b/g)) {
-    if (!noise.has(m[1])) props.add(m[1]);
+  const propRe = new RegExp(
+    `\\b${escapeRe(responseVar)}(?:\\??\\.([a-zA-Z_][\\w]*)|(\\['([a-zA-Z_][\\w]*)'\\]))`, 'g'
+  );
+  for (const m of segment.matchAll(propRe)) {
+    const key = m[1] ?? m[3];
+    if (key && !WRAPPER_KEYS.has(key)) props.add(key);
   }
   return [...props];
+}
+
+function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Finds the response variable name in a .then(NAME => …).then(NAME2 => …) chain.
+// The JSON response is in the second .then after .json(); if only one .then exists
+// and its body calls .json() inside, fall back to that .then's var.
+function resolveChainVar(segment: string): string | null {
+  // Collect all .then(NAME => or .then(function(NAME) patterns in order.
+  const thenRe = /\.then\s*\(\s*(?:function\s*\(\s*([a-zA-Z_$][\w$]*)\s*\)|([a-zA-Z_$][\w$]*)\s*=>)/g;
+  const vars: string[] = [];
+  for (const m of segment.matchAll(thenRe)) {
+    vars.push(m[1] ?? m[2]);
+  }
+  if (vars.length === 0) return null;
+  // If ≥2 .then handlers, the second is the JSON consumer (first calls .json()).
+  if (vars.length >= 2) return vars[1];
+  // Single .then: only use it if the segment also contains .json() (it's the consumer).
+  if (segment.includes('.json()')) return vars[0];
+  return null;
+}
+
+// Finds the response variable from: const|let|var NAME = await <expr>.json()
+// or const|let|var NAME = await apiFetch(...)
+function resolveAwaitVar(segment: string): string | null {
+  const m = segment.match(/(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*await\s+(?:[^;]*?\.json\(\)|apiFetch\s*\()/);
+  return m ? m[1] : null;
 }
 
 export function addRestRoutes(g: FlowGraph, repoRoot: string, repo: 'free'|'pro'): void {

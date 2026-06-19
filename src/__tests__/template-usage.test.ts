@@ -7,6 +7,13 @@ import { tmpdir } from 'node:os';
 import { isEntrypoint, checkTemplateUsage } from '../template-usage-checker.js';
 import { emptyGraph, addNode, addEdge, nodeId } from '../flow/graph.js';
 
+// Helpers to create a minimal test repo tree
+function makeRepo(dir: string, phpContent: string = '') {
+  mkdirSync(join(dir, 'templates', 'parts'), { recursive: true });
+  // assets/js for JS source (optional)
+  if (phpContent) writeFileSync(join(dir, 'loader.php'), phpContent);
+}
+
 test('parts are not entrypoints; top-level page templates are', () => {
   assert.equal(isEntrypoint('templates/parts/post-card.php'), false);
   assert.equal(isEntrypoint('templates/feed/home.php'), true);
@@ -56,6 +63,52 @@ test('checkTemplateUsage: orphan flagged, loaded part not flagged, bare-suffix d
     assert.ok(
       !issueIds.some(id => id.includes('post-card.php')),
       `Expected post-card.php NOT to be flagged, got: ${JSON.stringify(issueIds)}`
+    );
+
+    // Message format check: orphan issue uses pinpoint message
+    const orphanIssue = result.issues.find(i => i.id.includes('orphan-widget.php'));
+    assert.ok(orphanIssue?.message.includes('referenced nowhere'), 'message should say "referenced nowhere"');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('checkTemplateUsage: template whose basename appears in a PHP string literal is NOT flagged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tpl-reffloor-test-'));
+  try {
+    mkdirSync(join(dir, 'templates', 'parts'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'parts', 'dynamic-card.php'), '<?php // dynamic ?>');
+    // A PHP source file that references the template basename via a string literal (dynamic load)
+    writeFileSync(join(dir, 'loader.php'), `<?php buddynext_get_template( $prefix . 'dynamic-card.php' ); ?>`);
+
+    const g = emptyGraph({ free: dir }, new Date().toISOString());
+    const result = checkTemplateUsage(g, [dir]);
+    const issueIds = result.issues.map(i => i.id);
+
+    assert.ok(
+      !issueIds.some(id => id.includes('dynamic-card.php')),
+      `dynamic-card.php (basename in string literal) must NOT be flagged, got: ${JSON.stringify(issueIds)}`
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('checkTemplateUsage: template whose name appears nowhere in source IS flagged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tpl-reffloor-nowhere-'));
+  try {
+    mkdirSync(join(dir, 'templates', 'parts'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'parts', 'truly-orphan.php'), '<?php // orphan ?>');
+    // No PHP/JS source references 'truly-orphan.php' anywhere
+    writeFileSync(join(dir, 'other.php'), `<?php echo 'something unrelated'; ?>`);
+
+    const g = emptyGraph({ free: dir }, new Date().toISOString());
+    const result = checkTemplateUsage(g, [dir]);
+    const issueIds = result.issues.map(i => i.id);
+
+    assert.ok(
+      issueIds.some(id => id.includes('truly-orphan.php')),
+      `truly-orphan.php (not referenced anywhere) must be flagged, got: ${JSON.stringify(issueIds)}`
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

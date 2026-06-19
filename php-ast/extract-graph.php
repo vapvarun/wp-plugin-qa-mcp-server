@@ -56,19 +56,21 @@ function processPhpFile(string $abs, string $base, array &$out, $parser, $printe
             if ($n instanceof Class_ && $n->name) $this->cls = ($this->ns ? $this->ns.'\\' : '').$n->name->toString();
             if ($n instanceof Function_) {
                 $fqn = ($this->ns?$this->ns.'\\':'').$n->name->toString();
+                $body = $this->printer->prettyPrint($n->stmts ?? []);
                 $this->out['symbols'][] = ['kind'=>'function','name'=>$n->name->toString(),
                     'class'=>null,'fqn'=>$fqn,
                     'file'=>$this->relf,'line'=>$n->getStartLine(),
-                    'bodyHash'=>sha1($this->printer->prettyPrint($n->stmts ?? [])),
+                    'bodyHash'=>sha1($body),'bodyLen'=>strlen($body),
                     'params'=>array_map(fn($p)=>$p->var->name ?? '', $n->params),'visibility'=>null,'abstract'=>false];
                 $this->fnFqn = $fqn;
             }
             if ($n instanceof ClassMethod && $this->cls) {
                 $fqn = $this->cls.'::'.$n->name->toString();
+                $body = $this->printer->prettyPrint($n->stmts ?? []);
                 $this->out['symbols'][] = ['kind'=>'method','name'=>$n->name->toString(),
                     'class'=>$this->cls,'fqn'=>$fqn,
                     'file'=>$this->relf,'line'=>$n->getStartLine(),
-                    'bodyHash'=>sha1($this->printer->prettyPrint($n->stmts ?? [])),
+                    'bodyHash'=>sha1($body),'bodyLen'=>strlen($body),
                     'params'=>array_map(fn($p)=>$p->var->name ?? '', $n->params),
                     'visibility'=>$n->isPublic()?'public':($n->isProtected()?'protected':'private'),
                     'abstract'=>$n->isAbstract()];

@@ -250,3 +250,9 @@ fixture `flow.json`.
 - Registering the tools in the live MCP `server.ts` tool list (later step).
 - Multi-agent Workflow execution of `logic-flow` (opt-in, separate pass).
 - Generalizing rules beyond what BN needs (BN-proven patterns first).
+
+## Precision over recall (non-negotiable)
+
+Every checker emits only high-confidence, actionable findings with a concrete fix. Suppress likely-false-positives via name-reference floors, comment-stripping, trivial-body thresholds, and response-var scoping even at the cost of recall. A finding that a human or AI must triage to decide whether it is real is a tool failure, not a finding. NEVER emit candidate piles or "N issues, triage them." The rule: if the checker cannot assert with high confidence that the finding is real, it must stay silent.
+
+Refinements applied so far: strip PHP comments before matching; require `$wpdb` (not any `->get_*`) for raw-SQL; exclude empty-body hashes from dup clustering; capture `$this->`/`self::`/`Class::` method calls in the graph; scope JS reads to the response binding variable (not any obj.prop near the URL); skip dup clusters where every member body is < 80 chars (trivial stubs like `return true;`); suppress never-loaded template warnings when the template name appears in any quoted string literal (dynamic load).

@@ -45,52 +45,47 @@ function cb(){ return rest_ensure_response(array('items'=>$x)); }
   assert.deepEqual(extractShapeKeys(php).sort(), ['items']);
 });
 
-// extractJsReads noise exclusions
-test('extractJsReads excludes noise props like status', () => {
-  const js = `fetch('/buddynext/v1/items').then(r=>{ if(r.status===200) return r.json(); }).then(d=>{ render(d.items); });`;
-  const reads = extractJsReads(js, '/buddynext/v1/items');
-  assert.ok(reads.includes('items'), 'items should be present');
-  assert.ok(!reads.includes('status'), 'status should be excluded');
-});
-
-// DOM / JS-API noise exclusions
-test('extractJsReads: DOM/JS-API props excluded, real response props kept', () => {
+// Response-var scoping: non-response obj.prop accesses near the URL must NOT be returned
+test('extractJsReads: el.hasAttribute/window.location near URL but not on response var are excluded', () => {
   const js = `
-    fetch('/buddynext/v1/members').then(r=>r.json()).then(d=>{
+    fetch('/buddynext/v1/items').then(r=>r.json()).then(d=>{
       render(d.items);
       el.hasAttribute('data-loaded');
-      node.removeAttribute('aria-busy');
-      node.setAttribute('aria-live','polite');
+      window.location.assign('/new');
       btn.disabled = true;
-      cb.checked = false;
-      url.replace('/old','/new');
-      location.assign('/new-page');
-      location.reload();
-      const h = location.hash;
-      const s = location.search;
-      const ho = location.host;
-      const hr = location.href;
-      const pe = el.parentElement;
-      const ns = el.nextElementSibling;
-      const ps = el.previousElementSibling;
-      parent.insertBefore(newEl, ref);
-      parent.appendChild(child);
-      parent.removeChild(child);
-      ul.contains(li);
-      el.matches('.active');
-      el.scrollIntoView({ behavior:'smooth' });
-      el.getBoundingClientRect();
-      el.cloneNode(true);
     });
   `;
-  const reads = extractJsReads(js, '/buddynext/v1/members');
-  assert.ok(reads.includes('items'), 'items should be present');
-  const domProps = ['hasAttribute','removeAttribute','setAttribute','disabled','checked',
-    'replace','assign','reload','location','hash','search','host','href',
-    'parentElement','nextElementSibling','previousElementSibling',
-    'insertBefore','appendChild','removeChild','contains','matches',
-    'scrollIntoView','getBoundingClientRect','cloneNode'];
-  for (const p of domProps) {
-    assert.ok(!reads.includes(p), `DOM/JS-API prop "${p}" must be excluded`);
-  }
+  const reads = extractJsReads(js, '/buddynext/v1/items');
+  assert.ok(reads.includes('items'), 'items (response var prop) should be present');
+  assert.ok(!reads.includes('hasAttribute'), 'el.hasAttribute must NOT be returned (not on response var)');
+  assert.ok(!reads.includes('location'), 'window.location must NOT be returned (not on response var)');
+  assert.ok(!reads.includes('disabled'), 'btn.disabled must NOT be returned (not on response var)');
+});
+
+// Destructure pattern: .then(({items, cursor}) => ...) returns those keys directly
+test('extractJsReads: destructure pattern returns destructured keys', () => {
+  const js = `fetch('/buddynext/v1/feed').then(r=>r.json()).then(({items,cursor})=>{ render(items); show(cursor); });`;
+  const reads = extractJsReads(js, '/buddynext/v1/feed');
+  assert.deepEqual(reads.sort(), ['cursor', 'items']);
+});
+
+// No response binding found → return []
+test('extractJsReads: no response binding → returns empty array', () => {
+  const js = `doSomething('/buddynext/v1/noop'); el.style.color = 'red';`;
+  const reads = extractJsReads(js, '/buddynext/v1/noop');
+  assert.deepEqual(reads, []);
+});
+
+// Await pattern: const data = await fetch(...).json()
+test('extractJsReads: await pattern resolves response var', () => {
+  const js = `
+    async function load() {
+      const res = await fetch('/buddynext/v1/profile').then(r=>r.json());
+      showName(res.displayName);
+      setAvatar(res.avatarUrl);
+    }
+  `;
+  const reads = extractJsReads(js, '/buddynext/v1/profile');
+  assert.ok(reads.includes('displayName'), 'displayName should be present');
+  assert.ok(reads.includes('avatarUrl'), 'avatarUrl should be present');
 });

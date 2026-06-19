@@ -1,7 +1,7 @@
 import { addNode, addEdge, nodeId } from './graph.js';
 import type { FlowGraph } from '../types.js';
 
-export interface PhpSymbol { kind:'function'|'method'; name:string; class:string|null; fqn:string; file:string; line:number; bodyHash:string; params:string[]; visibility:string|null; abstract:boolean; }
+export interface PhpSymbol { kind:'function'|'method'; name:string; class:string|null; fqn:string; file:string; line:number; bodyHash:string; bodyLen:number; params:string[]; visibility:string|null; abstract:boolean; }
 export interface PhpCall { fromFqn:string|null; toName:string; viaService:string|null; file:string; line:number; }
 export interface PhpReg { hook:string; callback:string; mechanism:string; file:string; line:number; }
 export interface PhpBind { id:string; class:string; file:string; line:number; }
@@ -19,7 +19,7 @@ export function ingestPhpFacts(g: FlowGraph, facts: PhpFacts, repo: 'free'|'pro'
   for (const s of facts.symbols) {
     const id = nodeId(s.kind, s.fqn);
     addNode(g, { id, kind: s.kind, name: s.fqn, file: s.file, line: s.line, repo,
-      meta: { bodyHash: s.bodyHash, params: s.params, class: s.class, visibility: s.visibility, abstract: s.abstract, short: s.name } });
+      meta: { bodyHash: s.bodyHash, bodyLen: s.bodyLen ?? 0, params: s.params, class: s.class, visibility: s.visibility, abstract: s.abstract, short: s.name } });
     if (s.kind === 'method') {
       const arr = methodByShortName.get(s.name) ?? []; arr.push(s.fqn); methodByShortName.set(s.name, arr);
     }
