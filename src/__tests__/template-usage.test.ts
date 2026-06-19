@@ -31,13 +31,14 @@ test('checkTemplateUsage: orphan flagged, loaded part not flagged, bare-suffix d
     addNode(g, { id: loaderId, kind: 'route', name: 'feed-home', file: 'src/feed.php', line: 1, repo: 'free' });
     addEdge(g, { from: loaderId, to: postCardId, kind: 'loads', file: 'src/feed.php', line: 10 });
 
-    // DISTRACTOR: bare 'card.php' node with a loads edge — the old code's buggy arm
-    // `nameForLoader.endsWith(l)` would match 'parts/post-card.php'.endsWith('card.php') = TRUE,
-    // which also risks matching 'parts/orphan-widget.php' if any loaded bare suffix is e.g. 'widget.php'
-    // We add a distractor whose bare name is 'card.php' — under old code, this suppresses post-card
-    // (post-card would pass even without the direct loads edge), but must NOT suppress orphan-widget.
-    const distractorId = nodeId('template', 'card.php');
-    addNode(g, { id: distractorId, kind: 'template', name: 'card.php', file: 'templates/card.php', line: 1, repo: 'free' });
+    // DISTRACTOR: a bare-named loaded template 'widget.php' that is a SUFFIX of the
+    // orphan disk file 'parts/orphan-widget.php'. This is the trap that RED→GREENs the fix:
+    //   OLD arm  `nameForLoader.endsWith(l)`        → 'parts/orphan-widget.php'.endsWith('widget.php') = TRUE
+    //            → orphan-widget WRONGLY suppressed → "orphan flagged" assertion FAILS (RED).
+    //   FIXED arm `nameForLoader.endsWith('/' + l)` → endsWith('/widget.php') = FALSE
+    //            → orphan-widget correctly flagged (GREEN).
+    const distractorId = nodeId('template', 'widget.php');
+    addNode(g, { id: distractorId, kind: 'template', name: 'widget.php', file: 'templates/widget.php', line: 1, repo: 'free' });
     const distractorLoaderId = nodeId('route', 'distractor-loader');
     addNode(g, { id: distractorLoaderId, kind: 'route', name: 'distractor-loader', file: 'src/distractor.php', line: 1, repo: 'free' });
     addEdge(g, { from: distractorLoaderId, to: distractorId, kind: 'loads', file: 'src/distractor.php', line: 5 });
