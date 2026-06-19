@@ -12,10 +12,18 @@ export function checkLogicFlow(g: FlowGraph, journeys: Array<{id:string;name:str
       title:`Journey "${j.name}" has no implementing entry`, message:`journeys.json entry ${j.entry} resolves to no route in the graph. Coverage gap or stale journey.`,
       file:'audit/journeys.json', line:0, code:'logic-flow-no-path', fix:`Implement the entry, or update/remove the journey.` });
   }
-  for (const p of routePaths) if (!matched.has(p))
-    issues.push({ id:`logic-flow:undocumented:${p}`, category:'logic-flow', severity:'low', type:'info',
-      title:`Route ${p} is in no documented journey`, message:`Consider adding a journey + cert oracle for go-live coverage.`,
-      file:'', line:0, code:'logic-flow-undocumented', fix:`Add to journeys.json if user-facing.` });
+  // Collect undocumented routes and emit a single summary instead of per-route noise.
+  const undocumented = routePaths.filter(p => !matched.has(p));
+  if (undocumented.length > 0) {
+    const MAX_LISTED = 30;
+    const listed = undocumented.slice(0, MAX_LISTED);
+    const overflow = undocumented.length - listed.length;
+    const routeList = listed.join(', ') + (overflow > 0 ? `, +${overflow} more` : '');
+    issues.push({ id:`logic-flow:undocumented-summary`, category:'logic-flow', severity:'low', type:'info',
+      title:`${undocumented.length} route(s) have no documented journey`,
+      message:`${undocumented.length} route(s) not covered by journeys.json: ${routeList}. Consider adding journeys + cert oracles for go-live coverage.`,
+      file:'', line:0, code:'logic-flow-undocumented', fix:`Add to journeys.json for any user-facing route.` });
+  }
   const failed = 0; // warnings/info only
   return { category:'logic-flow', issues, passed: matched.size, failed, skipped: 0, duration: Date.now() - start };
 }

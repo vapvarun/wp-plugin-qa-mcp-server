@@ -5,7 +5,7 @@ import type { FlowGraph, FlowNode, FlowEdge, FlowNodeKind, FlowEdgeKind } from '
 export function nodeId(kind: FlowNodeKind, key: string): string { return `${kind}:${key}`; }
 
 export function emptyGraph(repos: { free: string; pro?: string }, generated: string): FlowGraph {
-  return { nodes: {}, edges: [], fingerprints: {}, repos, generated };
+  return { nodes: {}, edges: [], fingerprints: {}, repos, generated, referencedNames: [] };
 }
 
 export function addNode(g: FlowGraph, node: FlowNode): void { g.nodes[node.id] = node; }

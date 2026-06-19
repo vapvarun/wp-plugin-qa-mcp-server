@@ -648,4 +648,5 @@ export interface FlowGraph {
         pro?: string;
     };
     generated: string;
+    referencedNames?: string[];
 }

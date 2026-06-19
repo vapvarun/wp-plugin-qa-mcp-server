@@ -5,9 +5,15 @@ export interface PhpSymbol { kind:'function'|'method'; name:string; class:string
 export interface PhpCall { fromFqn:string|null; toName:string; viaService:string|null; file:string; line:number; }
 export interface PhpReg { hook:string; callback:string; mechanism:string; file:string; line:number; }
 export interface PhpBind { id:string; class:string; file:string; line:number; }
-export interface PhpFacts { symbols:PhpSymbol[]; calls:PhpCall[]; registrations:PhpReg[]; serviceBindings:PhpBind[]; hooksFired:{hook:string;file:string;line:number}[]; templatesLoaded:{template:string;argKeys:string[];file:string;line:number}[]; errors:{file:string;message:string}[]; }
+export interface PhpFacts { symbols:PhpSymbol[]; calls:PhpCall[]; registrations:PhpReg[]; serviceBindings:PhpBind[]; hooksFired:{hook:string;file:string;line:number}[]; templatesLoaded:{template:string;argKeys:string[];file:string;line:number}[]; errors:{file:string;message:string}[]; referencedNames?:string[]; }
 
 export function ingestPhpFacts(g: FlowGraph, facts: PhpFacts, repo: 'free'|'pro'): void {
+  // 0. Merge referencedNames from sidecar into graph (deduplicated union).
+  if (facts.referencedNames && facts.referencedNames.length > 0) {
+    const existing = new Set(g.referencedNames ?? []);
+    for (const n of facts.referencedNames) existing.add(n);
+    g.referencedNames = Array.from(existing).sort();
+  }
   // 1. Symbols → function/method nodes (keyed by fqn; meta carries bodyHash for dup).
   const methodByShortName = new Map<string, string[]>(); // short method name -> [fqn]
   for (const s of facts.symbols) {
