@@ -31,6 +31,29 @@ suite into the live MCP tool list later is just tool registration — no rework.
   judgment-heavy `logic-flow` ships as a descriptor-emitter + oracle schema
   (stubs to populate). No multi-agent Workflow required for this pass.
 
+## Scan scope — distribution-ready files only
+
+The graph is built ONLY over files that ship in the release, to avoid wasting
+tokens/time on tests, docs, and tooling. The scope is **derived from the
+release allowlist** (single source of truth), not a hand-maintained exclude
+list — so "what we audit" always equals "what ships."
+
+- **Source of truth:** parse `bin/build-release.sh` (`RUNTIME[]` + `OPTIONAL[]`
+  arrays) — or a `.distignore` if one exists. For BN free, RUNTIME =
+  `buddynext.php includes templates assets blocks libs theme.json` + `vendor`,
+  OPTIONAL = `languages uninstall.php readme.txt`. Pro: read its own
+  `bin/build-release.sh`. Fallback default exclude set if no build script:
+  `tests/`, `test-results/`, `docs/`, `plan*/`, `audit*/`, `bin/`,
+  `mu-plugins/`, `node_modules/`, `.github/`, all `*.md`.
+- **Our-code vs third-party:** `libs/` and `vendor/` ship but are third-party.
+  They are **call-edge targets only** — the graph resolves calls *into* them so
+  our symbols don't look orphaned, but they are NEVER scanned for dup / orphan /
+  wrong-function findings (not ours to fix).
+- **JS scope:** only enqueued/shipped `assets/` JS (the same files the plugin
+  registers), not build sources or `node_modules`.
+- The exclusion is applied in `flow-graph.ts` at file-enumeration time, so every
+  downstream checker inherits it for free.
+
 ## Defect classes (confirmed)
 
 1. Duplicate / near-duplicate functions
@@ -55,9 +78,23 @@ instead of re-parsing source; future MCP tools read the same file.
   (consumer→keys) · `loads` (loader→template + arg keys) · `fires` / `consumes`
   (hook) · `gatedBy` (route→option)
 
-The graph reuses existing scanner data already in the manifest
+**Parse strategy — PHP-AST sidecar (hybrid).** The PHP side of the graph is
+built by a small PHP script using **`nikic/php-parser`** (already in BN's
+`vendor/`) that emits symbols, classes/methods, call-sites,
+callback-registrations, and service-container bindings as JSON;
+`flow-graph.ts` (TS) consumes that JSON. This accurately resolves BN's
+dominant indirect dispatch — `[$this,'method']` callbacks, the
+`buddynext_service('id')->method()` service locator, and `register_rest_route`
+callbacks (480+ edges) — which a regex heuristic would mis-resolve, producing
+noise on exactly the dup/orphan/wrong-function classes that matter most. `php`
+is already required for the cert harness, so no new dependency. TS continues to
+own JS parsing, orchestration, the report, and the existing narrow-scope
+checkers (`template-contract`, `rest-js-contract` stay TS-regex — they work
+well on their bounded problem).
+
+The graph also reuses existing scanner data already in the manifest
 (`rest.endpoints` with `requestArgs`/`gatedBy`, `hooks_fired`, `wiring`,
-`tables`) and the loader↔template contract logic already implemented in
+`tables`) and the loader↔template contract logic already in
 `template-contract-checker.ts`.
 
 ### Checkers — each a `*-checker.ts` returning `CheckerResult`
@@ -101,6 +138,79 @@ The expensive parse runs **once**; subsequent runs touch only what changed.
   not 1,150 files; they run in parallel, one per candidate/flow; the graph hands
   them a concrete shortlist so they never re-scan. (Workflow opt-in only — not
   used in this pass.)
+
+## Gap analysis & hardening (self-audit 2026-06-19)
+
+Probing the BN pair exposed assumptions the naive design would have gotten
+wrong. These are now requirements, not nice-to-haves.
+
+### 1. Consumption registry — orphan-checker correctness (HIGH)
+
+BN's dominant calling convention is indirect: **257** `[$this,'method']`
+callbacks, **229** `'callback' =>` REST registrations, **224**
+`buddynext_service('id')->method()` service-locator dispatches, 7
+`call_user_func`. A name-based `calls` edge alone would mark most methods
+"dead." The graph MUST treat **registration as consumption** across every
+mechanism: `add_action`/`add_filter` (string AND `[$obj,'m']`/`[Class::class,'m']`
+AND closures), `register_rest_route` `callback`/`permission_callback`,
+`register_activation/deactivation_hook`, `add_shortcode`, block
+`render_callback`, `wp_schedule_event`/cron, `register_setting`
+sanitize/auth callbacks, and WP-CLI commands. Any symbol referenced as a
+callback is consumed.
+
+### 2. Service-locator resolution (HIGH)
+
+`buddynext_service('feed')->render()` is the primary dispatch. The graph
+builder must resolve service IDs → bound class → methods (parse the service
+container registration map once) so method-call edges resolve. Unresolved
+service IDs are reported as a graph-quality warning, never silently dropped.
+
+### 3. Near-duplicate method + legitimate-override exclusion (HIGH)
+
+"Duplicate" = exact normalized-body hash (whitespace/comments stripped, but
+NOT identifier renaming — renamed-var clones are a separate, lower-confidence
+tier). "Near-duplicate" = token-shingle Jaccard similarity over a threshold
+(default 0.85), reported as lower severity for human confirmation. Explicitly
+EXCLUDE legitimate Free/Pro extension: a Pro method that **overrides** a free
+method (same class hierarchy), or a callback that replaces another via filter,
+is not a dup. Cross-pair dup = two *independent* implementations of the same
+intent, not an override.
+
+### 4. Two distinct data-flow planes (MEDIUM-HIGH)
+
+Do not invent a REST→template edge. There are two planes:
+(a) **REST route → JS consumer** (envelope keys) — owned by `rest-flow-checker`
+/ `rest-js-contract`; (b) **controller/service → template** (loader arg keys)
+— owned by `template-usage` / `template-contract`. A template consumes PHP
+service data, never a route's JSON. `rest-flow-checker` scopes to plane (a);
+SSR coverage lives in plane (b). Dynamic response shapes (service-hydrated
+arrays) that can't be resolved to literal keys are reported as
+"shape-unresolved" (graph-quality info), not as a false contract break.
+
+### 5. Stable finding IDs for baselining (MEDIUM)
+
+`generateTestId()` is a per-run sequential counter — unusable for a committed
+baseline (IDs shift every run). Flow-audit findings use **content-derived
+stable IDs**, e.g. `orphan:fn:BuddyNext\\Feed\\FeedController::render`,
+`dup:<sorted-member-hash>`, matching the semantic-ID style of
+`.contract-audit-baseline.json`.
+
+### 6. Reuse existing flow inventory (MEDIUM)
+
+logic-flow does NOT invent a flow list. It consumes `audit/journeys.json`,
+`audit/CODE_FLOWS.md`, and `audit/cert-oracles.json` as the entry→outcome
+inventory, emits descriptors that map graph paths onto those journeys, and
+flags journeys with no resolvable graph path (coverage gap) and graph entry
+points absent from the journey inventory (undocumented flow).
+
+### 7. Incremental invalidation honesty (LOW)
+
+The per-file fingerprint cache saves the **parse**, which is the expensive
+part. Global graph-walk checkers (dup, orphan) are cross-file by nature and
+recompute from the whole graph whenever ANY node changes — but that walk is
+cheap (it reads the graph, not source). Per-checker caching meaningfully helps
+only the file-local checkers; the spec does not overclaim per-checker savings
+for global ones.
 
 ## Build sequence (skeleton-first)
 
