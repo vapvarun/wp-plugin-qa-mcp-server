@@ -19,7 +19,7 @@ export function checkDupFunctions(g: FlowGraph): CheckerResult {
     if (allMethods && shorts.size === 1) continue;
     clusters++;
     issues.push({
-      id: `dup:${hash}`, category: 'plugin-dev-rules', severity: 'high', type: 'error',
+      id: `dup:${hash}`, category: 'dup-function', severity: 'high', type: 'error',
       title: `Duplicate implementation across ${members.length} symbols`,
       message: `Identical body in: ${members.map(m => `${m.name} (${m.file}:${m.line})`).join(', ')}. Consolidate to one canonical helper.`,
       file: members[0].file, line: members[0].line, code: 'duplicate-function',
@@ -27,5 +27,5 @@ export function checkDupFunctions(g: FlowGraph): CheckerResult {
     });
   }
   const checked = byHash.size;
-  return { category: 'plugin-dev-rules', issues, passed: Math.max(0, checked - clusters), failed: clusters, skipped: 0, duration: Date.now() - start };
+  return { category: 'dup-function', issues, passed: Math.max(0, checked - clusters), failed: clusters, skipped: 0, duration: Date.now() - start };
 }

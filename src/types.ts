@@ -391,7 +391,13 @@ export type TestCategory =
   | 'rest-js-contract'
   | 'editor-layout-bias'
   | 'template-contract'
-  | 'qa-coverage';
+  | 'qa-coverage'
+  | 'dup-function'
+  | 'orphan'
+  | 'rest-flow'
+  | 'canonical-usage'
+  | 'template-usage'
+  | 'logic-flow';
 
 export interface TestItem {
   id: string;
