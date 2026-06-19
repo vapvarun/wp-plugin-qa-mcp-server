@@ -15,3 +15,33 @@ test('flags an uncalled function but not a registered callback', () => {
   assert.ok(ids.includes('orphan:function:dead_fn'), 'dead_fn is orphan');
   assert.ok(!ids.some(i => i.includes('X::boot')), 'registered callback not orphan');
 });
+
+test('abstract method with zero inbound edges is not flagged', () => {
+  const g = emptyGraph({ free: '/free' }, 't');
+  addNode(g, { id: nodeId('method','Base::abstract_method'), kind:'method', name:'Base::abstract_method', file:'a.php', line:1, repo:'free', meta:{ abstract:true } });
+  const r = checkOrphans(g);
+  const ids = r.issues.map(i => i.id);
+  assert.ok(!ids.includes('orphan:method:Base::abstract_method'), 'abstract method not flagged as orphan');
+});
+
+test('template with loads edge is not flagged, but template without loads is flagged', () => {
+  const g = emptyGraph({ free: '/free' }, 't');
+  addNode(g, { id: nodeId('template','loaded.php'), kind:'template', name:'loaded.php', file:'a.php', line:1, repo:'free', meta:{} });
+  addNode(g, { id: nodeId('template','orphaned.php'), kind:'template', name:'orphaned.php', file:'b.php', line:1, repo:'free', meta:{} });
+  addNode(g, { id: nodeId('function','include_tpl'), kind:'function', name:'include_tpl', file:'c.php', line:1, repo:'free', meta:{} });
+  addEdge(g, { from: nodeId('function','include_tpl'), to: nodeId('template','loaded.php'), kind:'loads', file:'c.php', line:5 });
+  const r = checkOrphans(g);
+  const ids = r.issues.map(i => i.id);
+  assert.ok(!ids.includes('orphan:template:loaded.php'), 'template with loads edge not flagged');
+  assert.ok(ids.includes('orphan:template:orphaned.php'), 'template without loads edge is flagged');
+});
+
+test('function with reads edge is not flagged', () => {
+  const g = emptyGraph({ free: '/free' }, 't');
+  addNode(g, { id: nodeId('function','global_var'), kind:'function', name:'global_var', file:'a.php', line:1, repo:'free', meta:{} });
+  addNode(g, { id: nodeId('function','consumer'), kind:'function', name:'consumer', file:'b.php', line:1, repo:'free', meta:{} });
+  addEdge(g, { from: nodeId('function','consumer'), to: nodeId('function','global_var'), kind:'reads', file:'b.php', line:10 });
+  const r = checkOrphans(g);
+  const ids = r.issues.map(i => i.id);
+  assert.ok(!ids.includes('orphan:function:global_var'), 'function with reads edge not flagged');
+});

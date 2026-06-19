@@ -1,6 +1,7 @@
 import { inbound } from './flow/graph.js';
 import type { CheckerResult, CheckerIssue, FlowGraph } from './types.js';
 
+// Framework-convention entrypoints (e.g. register/boot): assumed consumed by the host even without a graph edge. Trade-off: a coincidentally-named dead method is not flagged.
 const SELF_USED = new Set(['__construct', '__invoke', '__destruct', 'register', 'boot']);
 
 export function checkOrphans(g: FlowGraph): CheckerResult {
