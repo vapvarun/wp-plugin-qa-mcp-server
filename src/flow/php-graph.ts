@@ -35,6 +35,10 @@ export function ingestPhpFacts(g: FlowGraph, facts: PhpFacts, repo: 'free'|'pro'
     if (c.viaService) {
       const cls = classOfService.get(c.viaService);
       if (cls && c.toName) toId = nodeId('method', `${cls}::${c.toName}`);
+    } else if (c.toName.includes('::')) {
+      // FQN-qualified method call (e.g. from $this->m(), self::m(), Class::m() after name resolution)
+      const candidate = nodeId('method', c.toName);
+      if (g.nodes[candidate]) toId = candidate;
     } else {
       // direct function call, else fall back to a unique method short-name match
       toId = nodeId('function', c.toName);

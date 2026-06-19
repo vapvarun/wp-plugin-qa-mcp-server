@@ -9,6 +9,7 @@ ini_set('display_startup_errors', '0');
 require __DIR__ . '/vendor/autoload.php';
 
 use PhpParser\{ParserFactory, Node, PrettyPrinter, NodeTraverser, NodeVisitorAbstract};
+use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\Node\Stmt\{Function_, ClassMethod, Class_};
 use PhpParser\Node\Expr\{FuncCall, MethodCall, StaticCall};
 
@@ -97,6 +98,32 @@ function processPhpFile(string $abs, string $base, array &$out, $parser, $printe
                 $m = $n->name instanceof Node\Identifier ? $n->name->toString() : null;
                 if ($sid!==null) $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$m??'','viaService'=>$sid,'file'=>$this->relf,'line'=>$n->getStartLine()];
             }
+            // $this->method() — precise resolution when inside a class
+            elseif ($n instanceof MethodCall && $n->var instanceof Node\Expr\Variable
+                && $n->var->name === 'this' && $this->cls !== null
+                && $n->name instanceof Node\Identifier) {
+                $toName = $this->cls . '::' . $n->name->toString();
+                $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$toName,'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
+            }
+            // General $obj->method() — bare method name, best-effort resolution downstream
+            elseif ($n instanceof MethodCall && $n->name instanceof Node\Identifier) {
+                $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$n->name->toString(),'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
+            }
+            // StaticCall: self::method() / static::method() — resolve to enclosing class
+            if ($n instanceof StaticCall && $n->name instanceof Node\Identifier
+                && $n->class instanceof Node\Name
+                && in_array($n->class->toString(), ['self','static'], true)
+                && $this->cls !== null) {
+                $toName = $this->cls . '::' . $n->name->toString();
+                $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$toName,'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
+            }
+            // StaticCall: ClassName::method() — best-effort (aliased/short name)
+            elseif ($n instanceof StaticCall && $n->name instanceof Node\Identifier
+                && $n->class instanceof Node\Name
+                && !in_array($n->class->toString(), ['self','static','parent'], true)) {
+                $toName = $n->class->toString() . '::' . $n->name->toString();
+                $this->out['calls'][] = ['fromFqn'=>$fromFqn,'toName'=>$toName,'viaService'=>null,'file'=>$this->relf,'line'=>$n->getStartLine()];
+            }
             // Service binding: $services['id'] = ... new Class / fn()=>new Class
             if ($n instanceof Node\Expr\Assign && $n->var instanceof Node\Expr\ArrayDimFetch
                 && $n->var->var instanceof Node\Expr\Variable && $n->var->var->name==='services') {
@@ -119,7 +146,7 @@ function processPhpFile(string $abs, string $base, array &$out, $parser, $printe
             return null;
         }
     };
-    $trav = new NodeTraverser(); $trav->addVisitor($visitor); $trav->traverse($ast);
+    $trav = new NodeTraverser(); $trav->addVisitor(new NameResolver()); $trav->addVisitor($visitor); $trav->traverse($ast);
 }
 
 foreach ($args as $entry) {
