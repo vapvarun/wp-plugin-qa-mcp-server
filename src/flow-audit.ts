@@ -10,6 +10,7 @@ import { checkCanonicalUsage } from './canonical-usage-checker.js';
 import { checkTemplateUsage } from './template-usage-checker.js';
 import { checkLogicFlow } from './logic-flow-checker.js';
 import { checkTemplateContracts } from './template-contract-checker.js';
+import { checkRestJsContract } from './rest-js-contract-checker.js';
 import { loadBaseline, applyBaseline } from './flow/baseline.js';
 import { renderReport } from './flow/report.js';
 import { fileExists } from './shared-utils.js';
@@ -20,7 +21,7 @@ export function runFlowAudit(opts: { freeRoot: string; proRoot?: string; generat
   const g = buildGraph(opts);
   const repoRoots = [opts.freeRoot, ...(opts.proRoot ? [opts.proRoot] : [])];
 
-  let journeys: Array<{ id: string; name: string; entry: string }> = [];
+  let journeys: unknown = [];
   const jp = join(opts.freeRoot, 'audit', 'journeys.json');
   if (fileExists(jp)) { try { journeys = JSON.parse(readFileSync(jp, 'utf8')); } catch { /* ignore */ } }
 
@@ -32,6 +33,7 @@ export function runFlowAudit(opts: { freeRoot: string; proRoot?: string; generat
     checkTemplateUsage(g, repoRoots),
     checkLogicFlow(g, Array.isArray(journeys) ? journeys : (journeys as any).journeys ?? []),
     checkTemplateContracts(opts.freeRoot),
+    checkRestJsContract(opts.freeRoot),
   ];
 
   const baseline = loadBaseline(join(opts.freeRoot, 'audit', '.flow-audit-baseline.json'));

@@ -10,7 +10,7 @@ export function renderReport(results: CheckerResult[], meta: { generated: string
   for (const r of results) {
     const errs = r.issues.filter(i => i.type === 'error').length;
     lines.push(`## ${r.category} — ${errs} error(s), ${r.issues.length} finding(s)`, ``);
-    const sorted = [...r.issues].sort((a, b) => ORDER[a.type] - ORDER[b.type]);
+    const sorted = [...r.issues].sort((a, b) => (ORDER[a.type] ?? 3) - (ORDER[b.type] ?? 3));
     for (const i of sorted) {
       lines.push(`- [${i.type}] **${i.title}** \`${i.file}:${i.line}\``);
       lines.push(`  - ${i.message}`);
