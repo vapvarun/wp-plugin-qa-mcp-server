@@ -620,3 +620,32 @@ export interface CompetitiveReport {
     }[];
     generatedAt: string;
 }
+export type FlowNodeKind = 'route' | 'method' | 'function' | 'service' | 'template' | 'hook' | 'jsConsumer' | 'option' | 'table';
+export type FlowEdgeKind = 'calls' | 'returns' | 'reads' | 'loads' | 'fires' | 'consumes' | 'gatedBy' | 'registers';
+export interface FlowNode {
+    id: string;
+    kind: FlowNodeKind;
+    name: string;
+    file: string;
+    line: number;
+    repo: 'free' | 'pro';
+    meta?: Record<string, unknown>;
+}
+export interface FlowEdge {
+    from: string;
+    to: string;
+    kind: FlowEdgeKind;
+    file: string;
+    line: number;
+    meta?: Record<string, unknown>;
+}
+export interface FlowGraph {
+    nodes: Record<string, FlowNode>;
+    edges: FlowEdge[];
+    fingerprints: Record<string, string>;
+    repos: {
+        free: string;
+        pro?: string;
+    };
+    generated: string;
+}
