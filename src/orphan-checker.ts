@@ -11,7 +11,7 @@ export function checkOrphans(g: FlowGraph): CheckerResult {
   // Build a set of referenced short names from the sidecar-emitted floor (suppresses false alarms
   // from [$this,'method'] callbacks, dynamic $obj->method(), REST/AJAX handlers, etc.)
   const refNames = new Set(g.referencedNames ?? []);
-  let orphans = 0;
+  const candidates: string[] = [];
   for (const n of targets) {
     const short = (n.meta?.short as string) ?? '';
     // Skip synthetic graph nodes (<global>, <loader>)
@@ -23,14 +23,21 @@ export function checkOrphans(g: FlowGraph): CheckerResult {
     // Name-reference floor: if the short name appears anywhere as a call target or callback string,
     // suppress the finding to avoid false "dead code" alarms.
     if (short && refNames.has(short)) continue;
-    orphans++;
+    candidates.push(n.name);
+  }
+  if (candidates.length > 0) {
+    const first40 = candidates.slice(0, 40);
+    const rest = candidates.length - first40.length;
+    const candidateList = rest > 0
+      ? `${first40.join(', ')} +${rest} more`
+      : first40.join(', ');
     issues.push({
-      id: `orphan:${n.kind}:${n.name}`, category: 'orphan', severity: 'medium', type: 'warning',
-      title: `Dead code: ${n.name} is never referenced`,
-      message: `${n.kind} ${n.name} is defined but appears nowhere in the free+pro code as a call, callback, hook/REST/AJAX registration, or template load. Confirmed unreferenced by name.`,
-      file: n.file, line: n.line, code: 'orphan-symbol',
-      fix: `Remove it. If it was meant to be active (e.g. left behind by a reverted/disabled integration), wire its missing registration instead.`,
+      id: 'orphan:summary', category: 'orphan', severity: 'low', type: 'info',
+      title: `${candidates.length} symbols are unreferenced within the codebase (dead-code is not statically confirmable)`,
+      message: `These functions/methods have no static call/registration/load and no name reference. This is NOT a confirmed dead-code list — PHP dynamic dispatch ($this->{$var}(), call_user_func, variable hooks) and external consumers (themes/app/other plugins) are invisible to static analysis, so the list contains both real dead code and live code. Confirm with runtime coverage before removing. Candidates (first 40): ${candidateList}.`,
+      file: '', line: 0, code: 'orphan-summary',
+      fix: `Do not bulk-delete. Confirm each against a seeded runtime/coverage run; remove only those proven unexecuted.`,
     });
   }
-  return { category: 'orphan', issues, passed: Math.max(0, targets.length - orphans), failed: orphans, skipped: 0, duration: Date.now() - start };
+  return { category: 'orphan', issues, passed: Math.max(0, targets.length - candidates.length), failed: 0, skipped: 0, duration: Date.now() - start };
 }

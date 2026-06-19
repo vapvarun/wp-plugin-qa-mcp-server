@@ -6,12 +6,11 @@ export function checkRestFlow(g: FlowGraph): CheckerResult {
   const issues: CheckerIssue[] = [];
   const routes = Object.values(g.nodes).filter(n => n.kind === 'route');
   let checked = 0;
+  const unresolvedRoutes: string[] = [];
   for (const r of routes) {
     const shapeKeys = (r.meta?.shapeKeys as string[]) ?? [];
     if (r.meta?.shapeUnresolved) {
-      issues.push({ id:`rest-flow:shape-unresolved:${r.name}`, category:'rest-flow', severity:'low', type:'info',
-        title:`Response shape unresolved for ${r.name}`, message:`Handler returns a dynamic/hydrated shape; key-level flow not checked.`,
-        file:r.file, line:0, code:'rest-flow-unresolved', fix:`(no action) or return a literal array to enable key checks.` });
+      unresolvedRoutes.push(r.name);
       continue;
     }
     checked++;
@@ -23,6 +22,20 @@ export function checkRestFlow(g: FlowGraph): CheckerResult {
         message:`JS reads data.${prop}; route shape is {${shapeKeys.join(', ')}}. Envelope mismatch → blank UI.`,
         file:r.file, line:0, code:'rest-flow-broken-read', fix:`Add "${prop}" to the response or fix the JS key.` });
   }
+  if (unresolvedRoutes.length > 0) {
+    const first30 = unresolvedRoutes.slice(0, 30);
+    const rest = unresolvedRoutes.length - first30.length;
+    const routeList = rest > 0
+      ? `${first30.join(', ')} +${rest} more`
+      : first30.join(', ');
+    issues.push({
+      id: 'rest-flow:shape-unresolved-summary', category: 'rest-flow', severity: 'low', type: 'info',
+      title: `${unresolvedRoutes.length} routes have unresolved response shapes (key-level flow not checked)`,
+      message: `These routes return a dynamic/hydrated shape; key-level flow cannot be checked statically. Routes (first 30): ${routeList}.`,
+      file: '', line: 0, code: 'rest-flow-unresolved-summary',
+      fix: `(no action) or return a literal array to enable key checks.`,
+    });
+  }
   const failed = issues.filter(i => i.type === 'error').length;
-  return { category:'rest-flow', issues, passed: Math.max(0, checked - failed), failed, skipped: 0, duration: Date.now() - start };
+  return { category: 'rest-flow', issues, passed: Math.max(0, checked - failed), failed, skipped: 0, duration: Date.now() - start };
 }
