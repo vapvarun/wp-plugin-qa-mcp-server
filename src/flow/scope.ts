@@ -5,10 +5,10 @@ import { dirExists, fileExists } from '../shared-utils.js';
 const THIRD_PARTY = new Set(['libs', 'vendor']);
 const DEFAULT_RUNTIME = ['includes', 'templates', 'assets', 'blocks'];
 
-function parseArray(sh: string, name: string): string[] {
-  const m = sh.match(new RegExp(name + '=\\(([^)]*)\\)'));
+export function parseArray(sh: string, name: string): string[] {
+  const m = sh.match(new RegExp('(?:^|\\n)[ \\t]*' + name + '=\\(([^)]*)\\)'));
   if (!m) return [];
-  return m[1].split(/\s+/).map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  return m[1].split(/\s+/).map(s => s.trim().replace(/^(["'])(.*)\1$/, '$2')).filter(Boolean);
 }
 
 export function resolveScanScope(repoRoot: string): { includeDirs: string[]; thirdParty: string[] } {
