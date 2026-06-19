@@ -67,7 +67,7 @@ test('checkTemplateUsage: orphan flagged, loaded part not flagged, bare-suffix d
 
     // Message format check: orphan issue uses pinpoint message
     const orphanIssue = result.issues.find(i => i.id.includes('orphan-widget.php'));
-    assert.ok(orphanIssue?.message.includes('referenced nowhere'), 'message should say "referenced nowhere"');
+    assert.ok(orphanIssue?.message.includes('loaded by nothing'), 'message should say "loaded by nothing"');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -109,6 +109,109 @@ test('checkTemplateUsage: template whose name appears nowhere in source IS flagg
     assert.ok(
       issueIds.some(id => id.includes('truly-orphan.php')),
       `truly-orphan.php (not referenced anywhere) must be flagged, got: ${JSON.stringify(issueIds)}`
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- Precision reference floor tests ---
+
+test('rule 2 exact: load_part("stat-strip") → parts/stat-strip.php NOT flagged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tpl-rule2-'));
+  try {
+    mkdirSync(join(dir, 'templates', 'parts'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'parts', 'stat-strip.php'), '<?php // stat-strip ?>');
+    writeFileSync(join(dir, 'loader.php'), `<?php $this->load_part('stat-strip', $data); ?>`);
+
+    const g = emptyGraph({ free: dir }, new Date().toISOString());
+    const result = checkTemplateUsage(g, [dir]);
+    const issueIds = result.issues.map(i => i.id);
+
+    assert.ok(
+      !issueIds.some(id => id.includes('stat-strip.php')),
+      `stat-strip.php (load_part exact stem match) must NOT be flagged, got: ${JSON.stringify(issueIds)}`
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rule 1 require: require __DIR__ . "/nav.php" → parts/nav.php NOT flagged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tpl-rule1-require-'));
+  try {
+    mkdirSync(join(dir, 'templates', 'parts'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'parts', 'nav.php'), '<?php // nav ?>');
+    writeFileSync(join(dir, 'loader.php'), `<?php require __DIR__ . '/nav.php'; ?>`);
+
+    const g = emptyGraph({ free: dir }, new Date().toISOString());
+    const result = checkTemplateUsage(g, [dir]);
+    const issueIds = result.issues.map(i => i.id);
+
+    assert.ok(
+      !issueIds.some(id => id.includes('parts/nav.php')),
+      `nav.php (require path) must NOT be flagged, got: ${JSON.stringify(issueIds)}`
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rule 1 array: "parts/panel.php" in array → parts/panel.php NOT flagged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tpl-rule1-array-'));
+  try {
+    mkdirSync(join(dir, 'templates', 'parts'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'parts', 'panel.php'), '<?php // panel ?>');
+    writeFileSync(join(dir, 'loader.php'), `<?php $parts = ['parts/panel.php', 'other.php']; ?>`);
+
+    const g = emptyGraph({ free: dir }, new Date().toISOString());
+    const result = checkTemplateUsage(g, [dir]);
+    const issueIds = result.issues.map(i => i.id);
+
+    assert.ok(
+      !issueIds.some(id => id.includes('panel.php')),
+      `panel.php (listed in array string) must NOT be flagged, got: ${JSON.stringify(issueIds)}`
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stem substring must NOT suppress: bn-profile-field and profile-fields do not mask profile-field.php', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tpl-stem-substr-'));
+  try {
+    mkdirSync(join(dir, 'templates', 'parts'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'parts', 'profile-field.php'), '<?php // profile-field ?>');
+    // Only contains CSS class substring and pluralised string — no 'profile-field' exact string, no 'profile-field.php'
+    writeFileSync(join(dir, 'loader.php'), `<?php echo '<div class="bn-profile-field">'; ?>`);
+    writeFileSync(join(dir, 'other.php'), `<?php $label = 'profile-fields'; ?>`);
+
+    const g = emptyGraph({ free: dir }, new Date().toISOString());
+    const result = checkTemplateUsage(g, [dir]);
+    const issueIds = result.issues.map(i => i.id);
+
+    assert.ok(
+      issueIds.some(id => id.includes('profile-field.php')),
+      `profile-field.php must be flagged (stem-as-substring must NOT suppress), got: ${JSON.stringify(issueIds)}`
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('orphan-part.php with no references at all IS flagged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tpl-orphan-bare-'));
+  try {
+    mkdirSync(join(dir, 'templates', 'parts'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'parts', 'orphan-part.php'), '<?php // orphan ?>');
+
+    const g = emptyGraph({ free: dir }, new Date().toISOString());
+    const result = checkTemplateUsage(g, [dir]);
+    const issueIds = result.issues.map(i => i.id);
+
+    assert.ok(
+      issueIds.some(id => id.includes('orphan-part.php')),
+      `orphan-part.php (no references anywhere) must be flagged, got: ${JSON.stringify(issueIds)}`
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

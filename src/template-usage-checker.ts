@@ -12,21 +12,58 @@ export function isEntrypoint(rel: string): boolean {
   return inTemplates.split('/').length <= 2; // templates/foo.php or templates/route/home.php
 }
 
-// Build a set of all quoted string literal substrings across all PHP+JS source files in the repo roots.
-// Used as a reference floor: if a template's basename or loader-relative path appears in any string
-// literal it may be loaded dynamically — don't flag it.
-function buildStringLiterals(repoRoots: string[]): Set<string> {
+interface SourceIndex {
+  // All values inside quoted string literals (single or double quote, min 1 char)
+  literals: Set<string>;
+  // All literal path strings extracted from require/include statements
+  requirePaths: Set<string>;
+}
+
+// Scan all PHP+JS source in the given repo roots and build a SourceIndex.
+// Called once per checkTemplateUsage invocation.
+function buildSourceIndex(repoRoots: string[]): SourceIndex {
   const literals = new Set<string>();
-  const quoteRe = /['"]([^'"]{3,})['"]/g;
+  const requirePaths = new Set<string>();
+
+  // Matches: require/include(_once) followed by (optional whitespace, optional paren, optional __DIR__.'/', then a quoted literal)
+  // e.g.  require __DIR__ . '/nav.php';   require_once( 'parts/foo.php' );
+  const requireRe = /(?:require|include)(?:_once)?\s*[(\s]*(?:__DIR__\s*\.\s*)?['"]([^'"]+)['"]/g;
+  const quoteRe = /['"]([^'"]+)['"]/g;
+
   for (const root of repoRoots) {
     const phpFiles = (() => { try { return findPhpFiles(root); } catch { return []; } })();
     const jsFiles  = (() => { try { return findJsFiles(join(root, 'assets')); } catch { return []; } })();
     for (const f of [...phpFiles, ...jsFiles]) {
       let src = ''; try { src = readFileSync(f, 'utf8'); } catch { continue; }
+      // Extract require/include literal paths first
+      for (const m of src.matchAll(requireRe)) requirePaths.add(m[1]);
+      // Extract all quoted string literals
       for (const m of src.matchAll(quoteRe)) literals.add(m[1]);
     }
   }
-  return literals;
+  return { literals, requirePaths };
+}
+
+// Returns true if the template is referenced by source code (not via graph edge).
+// B.php = basename (e.g. "nav.php"), stem = "nav"
+// Rule 1: B.php appears as SUBSTRING of any quoted string literal OR require/include path
+// Rule 2: stem (without .php) is an EXACT match of any quoted string literal
+function isReferencedInSource(nameForLoader: string, base: string, idx: SourceIndex): boolean {
+  const stem = base.endsWith('.php') ? base.slice(0, -4) : base;
+
+  // Rule 1: B.php as substring in quoted literals
+  for (const s of idx.literals) {
+    if (s.includes(base)) return true;
+  }
+  // Rule 1: B.php as substring in require/include paths
+  for (const p of idx.requirePaths) {
+    if (p.includes(base)) return true;
+  }
+  // Rule 2: stem EXACT match in quoted literals (no substring — must be the whole string)
+  for (const s of idx.literals) {
+    if (s === stem) return true;
+  }
+  return false;
 }
 
 export function checkTemplateUsage(g: FlowGraph, repoRoots: string[]): CheckerResult {
@@ -35,8 +72,8 @@ export function checkTemplateUsage(g: FlowGraph, repoRoots: string[]): CheckerRe
   // Set of loaded template names (graph node name == relative template path passed to loader).
   const loaded = new Set(Object.values(g.nodes).filter(n => n.kind === 'template' && inbound(g, n.id, ['loads']).length > 0).map(n => n.name));
 
-  // Build reference floor once: any quoted string containing the template name counts as a reference.
-  const stringLiterals = buildStringLiterals(repoRoots);
+  // Build source index once across all repos.
+  const idx = buildSourceIndex(repoRoots);
 
   let checked = 0, orphaned = 0;
   for (const root of repoRoots) {
@@ -49,15 +86,11 @@ export function checkTemplateUsage(g: FlowGraph, repoRoots: string[]): CheckerRe
       checked++;
       if (isEntrypoint(rel)) continue;
       const isLoaded = [...loaded].some(l => l === nameForLoader || l.endsWith('/' + nameForLoader) || nameForLoader.endsWith('/' + l));
-      if (!isLoaded) {
-        // Reference floor: if any quoted string literal contains the loader-relative path or
-        // the basename, a dynamic/computed load may exist — suppress the finding.
-        const isReferenced = [...stringLiterals].some(s => s.includes(nameForLoader) || s.includes(base));
-        if (isReferenced) continue;
+      if (!isLoaded && !isReferencedInSource(nameForLoader, base, idx)) {
         orphaned++;
         issues.push({ id:`tpl-usage:never-loaded:${rel}`, category:'template-usage', severity:'medium', type:'warning',
           title:`Template ${rel} is never loaded`,
-          message:`Template ${rel} is never loaded and its name is referenced nowhere — remove it, or wire the missing \`buddynext_get_template()\` call.`,
+          message:`Template ${rel} is loaded by nothing (no buddynext_get_template, require/include, or load-helper reference anywhere) — remove it, or wire its loader.`,
           file:rel, line:1, code:'template-never-loaded',
           fix:`Load it from the right place, or delete it.` });
       }
