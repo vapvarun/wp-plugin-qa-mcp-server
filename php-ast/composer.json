@@ -1,0 +1,6 @@
+{
+  "name": "wbcom/wppqa-php-ast",
+  "description": "PHP-AST fact extractor for the flow-audit FlowGraph.",
+  "require": { "php": ">=8.0", "nikic/php-parser": "^5.0" },
+  "config": { "optimize-autoloader": true }
+}
