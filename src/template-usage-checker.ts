@@ -25,7 +25,7 @@ export function checkTemplateUsage(g: FlowGraph, repoRoots: string[]): CheckerRe
       const nameForLoader = rel.replace(/^templates\//, '');
       checked++;
       if (isEntrypoint(rel)) continue;
-      const isLoaded = [...loaded].some(l => l === nameForLoader || l.endsWith('/' + nameForLoader) || nameForLoader.endsWith(l));
+      const isLoaded = [...loaded].some(l => l === nameForLoader || l.endsWith('/' + nameForLoader) || nameForLoader.endsWith('/' + l));
       if (!isLoaded) {
         orphaned++;
         issues.push({ id:`tpl-usage:never-loaded:${rel}`, category:'template-usage', severity:'medium', type:'warning',
