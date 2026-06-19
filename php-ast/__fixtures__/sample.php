@@ -7,7 +7,13 @@ class Widget {
     public function render(): string {
         $s = sample_helper('hi');
         $feed = buddynext_service('feed')->latest();
-        return $s . $feed;
+        $late = $this->latest();          // $this->method() — should emit this->latest
+        return $s . $feed . $late;
+    }
+    public function latest(): string { return 'latest'; }
+    public static function helper(): string {
+        Widget::helper();                // self static call — should emit Widget::helper
+        return 'help';
     }
 }
 

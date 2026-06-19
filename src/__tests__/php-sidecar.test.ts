@@ -25,4 +25,14 @@ test('sidecar extracts functions, methods, calls, registrations, service binding
   assert.ok(g.calls.some((c: any) => c.viaService === 'feed'), 'records a service-locator call');
   assert.ok(g.registrations.some((r: any) => r.hook === 'init'), 'records add_action registration');
   assert.ok(g.serviceBindings.some((b: any) => b.id === 'feed'), 'records a service binding');
+  // New: $this->method() emits fully-qualified call
+  assert.ok(
+    g.calls.some((c: any) => c.toName === 'Sample\\Widget::latest' && c.viaService === null),
+    '$this->latest() in Widget::render emits toName Sample\\Widget::latest',
+  );
+  // New: ClassName::method() static call emits fully-qualified call
+  assert.ok(
+    g.calls.some((c: any) => c.toName === 'Sample\\Widget::helper' && c.viaService === null),
+    'Widget::helper() static call emits toName Sample\\Widget::helper',
+  );
 });
