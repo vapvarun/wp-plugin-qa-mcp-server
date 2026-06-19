@@ -25,8 +25,12 @@ export function ingestPhpFacts(g: FlowGraph, facts: PhpFacts, repo: 'free'|'pro'
     addNode(g, { id: nodeId('service', b.id), kind: 'service', name: b.id, file: b.file, line: b.line, repo, meta: { class: b.class } });
   }
   // 3. Calls → calls edges. Resolve viaService to bound class method.
+  // Fix 1: when fromFqn is null (call from file top-level / global scope), use a synthetic <global>
+  // node rather than falling back to toId which produces a meaningless self-loop.
+  const globalId = nodeId('function', '<global>');
+  addNode(g, { id: globalId, kind: 'function', name: '<global>', file: '', line: 0, repo, meta: { synthetic: true } });
   for (const c of facts.calls) {
-    const from = c.fromFqn ? (nodeIdForFqn(g, c.fromFqn)) : null;
+    const from = c.fromFqn ? nodeIdForFqn(g, c.fromFqn) : globalId;
     let toId: string | null = null;
     if (c.viaService) {
       const cls = classOfService.get(c.viaService);
@@ -39,7 +43,7 @@ export function ingestPhpFacts(g: FlowGraph, facts: PhpFacts, repo: 'free'|'pro'
         if (cands && cands.length === 1) toId = nodeId('method', cands[0]);
       }
     }
-    if (toId && g.nodes[toId]) addEdge(g, { from: from ?? toId, to: toId, kind: 'calls', file: c.file, line: c.line });
+    if (toId && g.nodes[toId] && from !== toId) addEdge(g, { from, to: toId, kind: 'calls', file: c.file, line: c.line });
   }
   // 4. Registrations → registers edge INTO the callback symbol (consumption marker).
   for (const r of facts.registrations) {
@@ -48,16 +52,21 @@ export function ingestPhpFacts(g: FlowGraph, facts: PhpFacts, repo: 'free'|'pro'
     addNode(g, { id: nodeId('hook', r.hook), kind: 'hook', name: r.hook, file: r.file, line: r.line, repo });
     if (g.nodes[cbId]) addEdge(g, { from: nodeId('hook', r.hook), to: cbId, kind: 'registers', file: r.file, line: r.line });
   }
-  // 5. Fired hooks → fires edges from hook node (producer side).
+  // 5. Fired hooks → hook node added for downstream consumers (e.g. registers edges).
+  // Fix 2: <loader> phantom node for loads edges — create it once so edges reference a real node.
+  // Fix 3: hooksFired entries carry no producer FQN so no meaningful `from` is available;
+  //         the self-loop fires edge (from hookNode to hookNode) is dropped entirely.
+  const loaderId = nodeId('function', '<loader>');
+  addNode(g, { id: loaderId, kind: 'function', name: '<loader>', file: '', line: 0, repo, meta: { synthetic: true } });
   for (const h of facts.hooksFired) {
     addNode(g, { id: nodeId('hook', h.hook), kind: 'hook', name: h.hook, file: h.file, line: h.line, repo });
-    addEdge(g, { from: nodeId('hook', h.hook), to: nodeId('hook', h.hook), kind: 'fires', file: h.file, line: h.line });
+    // hooksFired sidecar carries no producer FQN, so no `fires` edge is emitted here.
   }
   // 6. Templates loaded → template nodes + loads edges with argKeys.
   for (const t of facts.templatesLoaded) {
     const tid = nodeId('template', t.template);
     addNode(g, { id: tid, kind: 'template', name: t.template, file: t.file, line: t.line, repo, meta: {} });
-    addEdge(g, { from: nodeId('function', '<loader>'), to: tid, kind: 'loads', file: t.file, line: t.line, meta: { argKeys: t.argKeys } });
+    addEdge(g, { from: loaderId, to: tid, kind: 'loads', file: t.file, line: t.line, meta: { argKeys: t.argKeys } });
   }
 }
 
