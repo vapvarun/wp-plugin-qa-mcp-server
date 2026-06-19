@@ -1,5 +1,8 @@
 import type { CheckerResult, CheckerIssue, FlowGraph, FlowNode } from './types.js';
 
+// SHA-1 of the empty string — empty __construct / abstract stub bodies all hash to this.
+const EMPTY_BODY_HASH = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+
 export function checkDupFunctions(g: FlowGraph): CheckerResult {
   const start = Date.now();
   const byHash = new Map<string, FlowNode[]>();
@@ -13,6 +16,8 @@ export function checkDupFunctions(g: FlowGraph): CheckerResult {
   let clusters = 0;
   for (const [hash, members] of byHash) {
     if (members.length < 2) continue;
+    // Skip empty-body stubs: sha1('') clusters are abstract/empty-__construct false positives.
+    if (hash === EMPTY_BODY_HASH) continue;
     // Exclude same-short-name method override families (legitimate Free/Pro override).
     const shorts = new Set(members.map(m => m.meta?.short as string));
     const allMethods = members.every(m => m.kind === 'method');

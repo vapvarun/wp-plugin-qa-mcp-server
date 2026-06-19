@@ -52,3 +52,45 @@ test('extractJsReads excludes noise props like status', () => {
   assert.ok(reads.includes('items'), 'items should be present');
   assert.ok(!reads.includes('status'), 'status should be excluded');
 });
+
+// DOM / JS-API noise exclusions
+test('extractJsReads: DOM/JS-API props excluded, real response props kept', () => {
+  const js = `
+    fetch('/buddynext/v1/members').then(r=>r.json()).then(d=>{
+      render(d.items);
+      el.hasAttribute('data-loaded');
+      node.removeAttribute('aria-busy');
+      node.setAttribute('aria-live','polite');
+      btn.disabled = true;
+      cb.checked = false;
+      url.replace('/old','/new');
+      location.assign('/new-page');
+      location.reload();
+      const h = location.hash;
+      const s = location.search;
+      const ho = location.host;
+      const hr = location.href;
+      const pe = el.parentElement;
+      const ns = el.nextElementSibling;
+      const ps = el.previousElementSibling;
+      parent.insertBefore(newEl, ref);
+      parent.appendChild(child);
+      parent.removeChild(child);
+      ul.contains(li);
+      el.matches('.active');
+      el.scrollIntoView({ behavior:'smooth' });
+      el.getBoundingClientRect();
+      el.cloneNode(true);
+    });
+  `;
+  const reads = extractJsReads(js, '/buddynext/v1/members');
+  assert.ok(reads.includes('items'), 'items should be present');
+  const domProps = ['hasAttribute','removeAttribute','setAttribute','disabled','checked',
+    'replace','assign','reload','location','hash','search','host','href',
+    'parentElement','nextElementSibling','previousElementSibling',
+    'insertBefore','appendChild','removeChild','contains','matches',
+    'scrollIntoView','getBoundingClientRect','cloneNode'];
+  for (const p of domProps) {
+    assert.ok(!reads.includes(p), `DOM/JS-API prop "${p}" must be excluded`);
+  }
+});

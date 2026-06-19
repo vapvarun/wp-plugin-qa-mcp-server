@@ -57,6 +57,15 @@ export function extractJsReads(js: string, routeUrl: string): string[] {
     'getAttribute', 'setAttribute', 'querySelector', 'querySelectorAll',
     'addEventListener', 'removeEventListener',
     'parentNode', 'children', 'closest', 'append', 'remove', 'focus', 'blur',
+    // DOM attr/prop mutations
+    'hasAttribute', 'removeAttribute', 'disabled', 'checked',
+    // Location / navigation
+    'replace', 'assign', 'reload', 'location', 'hash', 'search', 'host', 'href',
+    // Tree traversal / mutation
+    'parentElement', 'nextElementSibling', 'previousElementSibling',
+    'insertBefore', 'appendChild', 'removeChild', 'contains', 'matches',
+    // Geometry / cloning
+    'scrollIntoView', 'getBoundingClientRect', 'cloneNode',
     // Math
     'floor', 'ceil', 'round', 'abs',
     // Object / Array

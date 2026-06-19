@@ -31,3 +31,22 @@ test('flags two methods with same bodyHash but different short names', () => {
   const r = checkDupFunctions(g);
   assert.equal(r.failed, 1, 'different short names with same hash must be flagged');
 });
+
+const EMPTY_BODY_HASH = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+
+test('excludes cluster where all nodes have empty-body hash (empty __construct / abstract stubs)', () => {
+  const g = emptyGraph({ free: '/free' }, 't');
+  addNode(g, { id: nodeId('method','A::__construct'), kind:'method', name:'A::__construct', file:'a.php', line:1, repo:'free', meta:{ bodyHash: EMPTY_BODY_HASH, short:'__construct' } });
+  addNode(g, { id: nodeId('method','B::__construct'), kind:'method', name:'B::__construct', file:'b.php', line:1, repo:'free', meta:{ bodyHash: EMPTY_BODY_HASH, short:'__construct' } });
+  addNode(g, { id: nodeId('method','C::__construct'), kind:'method', name:'C::__construct', file:'c.php', line:1, repo:'free', meta:{ bodyHash: EMPTY_BODY_HASH, short:'__construct' } });
+  const r = checkDupFunctions(g);
+  assert.equal(r.failed, 0, 'empty-body cluster must not be flagged');
+});
+
+test('still flags cluster with a real shared non-empty hash', () => {
+  const g = emptyGraph({ free: '/free' }, 't');
+  addNode(g, { id: nodeId('function','fn_x'), kind:'function', name:'fn_x', file:'x.php', line:1, repo:'free', meta:{ bodyHash:'abc123def456', short:'fn_x' } });
+  addNode(g, { id: nodeId('function','fn_y'), kind:'function', name:'fn_y', file:'y.php', line:1, repo:'free', meta:{ bodyHash:'abc123def456', short:'fn_y' } });
+  const r = checkDupFunctions(g);
+  assert.equal(r.failed, 1, 'real shared hash must still be flagged');
+});
