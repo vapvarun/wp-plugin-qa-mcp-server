@@ -1,7 +1,6 @@
 import { join } from 'node:path';
-import { writeFileSync } from 'node:fs';
-import { readFileSync } from 'node:fs';
-import { buildGraph } from './flow/build.js';
+import { writeFileSync, readFileSync } from 'node:fs';
+import { buildOrUpdate } from './flow/build.js';
 import { writeGraph } from './flow/graph.js';
 import { checkDupFunctions } from './dup-function-checker.js';
 import { checkOrphans } from './orphan-checker.js';
@@ -18,7 +17,7 @@ import type { CheckerResult } from './types.js';
 
 export function runFlowAudit(opts: { freeRoot: string; proRoot?: string; generated: string }):
   { results: CheckerResult[]; report: string; errorCount: number } {
-  const g = buildGraph(opts);
+  const g = buildOrUpdate(opts);
   const repoRoots = [opts.freeRoot, ...(opts.proRoot ? [opts.proRoot] : [])];
 
   let journeys: unknown = [];

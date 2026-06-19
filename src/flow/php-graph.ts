@@ -46,6 +46,16 @@ export function ingestPhpFacts(g: FlowGraph, facts: PhpFacts, repo: 'free'|'pro'
     if (toId && g.nodes[toId] && from !== toId) addEdge(g, { from, to: toId, kind: 'calls', file: c.file, line: c.line });
   }
   // 4. Registrations → registers edge INTO the callback symbol (consumption marker).
+  // Precision gap: if the registered callback is a closure or a symbol defined outside the
+  // scanned file set (e.g. a third-party lib or vendor path), the sidecar returns the raw
+  // callback string but no matching node exists in `g.nodes`, so no `registers` edge is
+  // emitted. The callback method will therefore appear as an orphan in checkOrphans() even
+  // though it IS consumed. Triagers should verify orphan findings on hook-registered symbols
+  // before treating them as dead code — the absence of a `registers` edge does not mean the
+  // callback is unreachable.
+  // Similarly, calls into libs/vendor are not resolved as call-graph targets (a known
+  // precision gap): if a function only calls external/vendor code it may still surface as an
+  // orphan caller candidate even though it is legitimately called at runtime.
   for (const r of facts.registrations) {
     if (!r.callback) continue;
     const cbId = r.callback.includes('::') ? nodeId('method', r.callback) : nodeId('function', r.callback);
