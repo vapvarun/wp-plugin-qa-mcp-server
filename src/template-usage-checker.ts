@@ -75,7 +75,8 @@ export function checkTemplateUsage(g: FlowGraph, repoRoots: string[]): CheckerRe
   // Build source index once across all repos.
   const idx = buildSourceIndex(repoRoots);
 
-  let checked = 0, orphaned = 0;
+  const candidates: string[] = [];
+  let checked = 0;
   for (const root of repoRoots) {
     const tplDir = join(root, 'templates');
     if (!dirExists(tplDir)) continue;
@@ -87,14 +88,31 @@ export function checkTemplateUsage(g: FlowGraph, repoRoots: string[]): CheckerRe
       if (isEntrypoint(rel)) continue;
       const isLoaded = [...loaded].some(l => l === nameForLoader || l.endsWith('/' + nameForLoader) || nameForLoader.endsWith('/' + l));
       if (!isLoaded && !isReferencedInSource(nameForLoader, base, idx)) {
-        orphaned++;
-        issues.push({ id:`tpl-usage:never-loaded:${rel}`, category:'template-usage', severity:'medium', type:'warning',
-          title:`Template ${rel} is never loaded`,
-          message:`Template ${rel} is loaded by nothing (no buddynext_get_template, require/include, or load-helper reference anywhere) — remove it, or wire its loader.`,
-          file:rel, line:1, code:'template-never-loaded',
-          fix:`Load it from the right place, or delete it.` });
+        candidates.push(rel);
       }
     }
   }
-  return { category:'template-usage', issues, passed: Math.max(0, checked - orphaned), failed: 0 /* warnings only */, skipped: 0, duration: Date.now() - start };
+
+  if (candidates.length > 0) {
+    const MAX_LISTED = 40;
+    const listed = candidates.slice(0, MAX_LISTED);
+    const overflow = candidates.length - listed.length;
+    const candidateList = overflow > 0
+      ? `${listed.join(', ')}, +${overflow} more`
+      : listed.join(', ');
+    issues.push({
+      id: 'tpl-usage:unloaded-summary',
+      category: 'template-usage',
+      severity: 'low',
+      type: 'info',
+      title: `${candidates.length} templates have no statically-detectable loader`,
+      message: `These template parts have no buddynext_get_template/require/load-helper reference found by static scan. This is NOT a confirmed dead-template list — templates loaded by computed name (e.g. buddynext_get_template($var), "panel-{$tab}.php") are invisible to static analysis. Confirm with runtime coverage (which parts never render) before removing. Candidates (first ${MAX_LISTED}): ${candidateList}.`,
+      file: candidates[0],
+      line: 1,
+      code: 'template-never-loaded',
+      fix: `Do not bulk-delete. Confirm against a seeded runtime render before removing.`,
+    });
+  }
+
+  return { category:'template-usage', issues, passed: Math.max(0, checked - candidates.length), failed: 0, skipped: 0, duration: Date.now() - start };
 }
