@@ -280,37 +280,130 @@ function scanBlocks(pluginPath) {
 // ($ns = $this->namespace) by searching the same file for the namespace
 // assignment. Returns '' when it can't be resolved in-file (e.g. the property
 // is set by a base controller in another file) — the route is still counted.
-function resolveRestNamespace(arg1, content) {
+function resolveRestNamespace(arg1, content, allContents) {
     const t = arg1.trim();
     const lit = t.match(/^['"]([^'"]+)['"]$/);
     if (lit)
         return lit[1];
+    // self::NS / static::NS / Foo::NS — the shape that made six controllers
+    // vanish from the manifest entirely.
+    const constVal = resolveClassConstant(t, content, allContents);
+    if (constVal !== null)
+        return constVal;
     const propAssign = content.match(/(?:\$this->)?namespace\s*=\s*['"]([^'"]+)['"]/);
     if (propAssign)
         return propAssign[1];
     const anyNs = content.match(/['"]([a-z0-9_-]+\/v\d+)['"]/i);
     return anyNs ? anyNs[1] : '';
 }
-function scanRestRoutes(phpFiles, contents, pluginPath) {
+// Resolve a PHP class constant reference (self::BASE, static::NS, Foo::ROUTE)
+// to its literal value by finding `const NAME = '...'` — same file first, then
+// any other file in the plugin, which covers a constant inherited from a base
+// controller. Returns null when the expression is not a constant reference or
+// no definition is found, so callers can fall back rather than invent a value.
+function resolveClassConstant(expr, content, allContents) {
+    const ref = expr.trim().match(/^(?:self|static|parent|[A-Za-z_\\][\w\\]*)::([A-Z_][A-Z0-9_]*)$/);
+    if (!ref)
+        return null;
+    const name = ref[1];
+    const defPattern = new RegExp(`\\bconst\\s+${name}\\s*=\\s*['"]([^'"]*)['"]`);
+    const here = content.match(defPattern);
+    if (here)
+        return here[1];
+    if (allContents) {
+        for (const other of allContents.values()) {
+            const m = other.match(defPattern);
+            if (m)
+                return m[1];
+        }
+    }
+    return null;
+}
+// Resolve a register_rest_route() route-path argument, which is a literal, a
+// class constant, or a concatenation of both (self::BASE . '/(?P<id>[\d]+)').
+// Returns '' when nothing resolves, so the caller can still record the route.
+function resolveRoutePath(arg2, content, allContents) {
+    const parts = arg2.trim().split('.');
+    let out = '';
+    for (const raw of parts) {
+        const p = raw.trim();
+        if (!p)
+            continue;
+        const lit = p.match(/^['"]([\s\S]*)['"]$/);
+        if (lit) {
+            out += lit[1];
+            continue;
+        }
+        const c = resolveClassConstant(p, content, allContents);
+        if (c !== null) {
+            out += c;
+            continue;
+        }
+        // An unresolvable fragment (a variable) — keep what we have rather than
+        // dropping the whole route.
+        return out;
+    }
+    return out;
+}
+// Collect EVERY method declared in a register_rest_route() args block. A merged
+// array registers several methods on one path; recording only the first made
+// entire endpoints invisible (a GET merged into a POST array was simply absent
+// from the manifest, which reads as "this route does not exist yet").
+function collectRouteMethods(context) {
+    // WP_REST_Server constants are what the code says; HTTP verbs are what a
+    // reader asking "is there a GET for this?" means. Expand them.
+    const CONSTANTS = {
+        READABLE: ['GET'],
+        CREATABLE: ['POST'],
+        EDITABLE: ['POST', 'PUT', 'PATCH'],
+        DELETABLE: ['DELETE'],
+        ALLMETHODS: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    };
+    const methods = new Set();
+    const pattern = /['"]methods['"]\s*=>\s*(?:['"]([\w,\s]+)['"]|WP_REST_Server::(\w+)|([\w:]+\s*(?:\|\s*[\w:]+)+))/g;
+    let m;
+    while ((m = pattern.exec(context)) !== null) {
+        const raw = m[1] || m[2] || m[3] || '';
+        for (const piece of raw.split(/[,|]/)) {
+            const cleaned = piece.replace(/WP_REST_Server::/g, '').trim().toUpperCase();
+            if (!cleaned)
+                continue;
+            for (const verb of CONSTANTS[cleaned] || [cleaned])
+                methods.add(verb);
+        }
+    }
+    return [...methods];
+}
+export function scanRestRoutes(phpFiles, contents, pluginPath) {
     const routes = [];
     // arg1 (namespace) may be a literal, a $variable, or $this->namespace — match
     // any non-comma expression so wrapper-registered routes (controllers that
     // extend a custom base, not WP_REST_Controller) are captured, not just the
-    // literal-namespace ones. arg2 (the route path) is always a literal.
-    const pattern = /register_rest_route\s*\(\s*([^,]+?)\s*,\s*['"]([^'"]+)['"]/g;
+    // literal-namespace ones.
+    //
+    // arg2 (the route path) may ALSO be a class constant or a concatenation
+    // (self::BASE . '/(?P<id>[\d]+)'), not just a quoted literal. Requiring a
+    // literal there silently dropped every such call — six BuddyNext Pro
+    // controllers, 11 routes, absent from the manifest entirely rather than
+    // flagged, which reads as "this route does not exist yet". Both arguments are
+    // now captured as raw expressions, terminated by the args array that always
+    // follows them, and resolved below.
+    const pattern = /register_rest_route\s*\(\s*([^,]+?)\s*,\s*([\s\S]+?)\s*,\s*(?:array\s*\(|\[)/g;
     for (const file of phpFiles) {
         const content = contents.get(file) || '';
         const rel = relativePath(file, pluginPath);
         let match;
         while ((match = pattern.exec(content)) !== null) {
+            // Skip a mention inside a comment. Now that the path no longer has to be
+            // a quoted literal, a docblock that merely NAMES register_rest_route()
+            // can satisfy the pattern and record a phantom route with no path.
+            const lineStart = content.lastIndexOf('\n', match.index) + 1;
+            const linePrefix = content.substring(lineStart, match.index).trim();
+            if (linePrefix.startsWith('*') || linePrefix.startsWith('//') || linePrefix.startsWith('#'))
+                continue;
             const contextEnd = Math.min(match.index + 1500, content.length);
             const context = content.substring(match.index, contextEnd);
-            const methods = [];
-            const methodMatch = context.match(/['"]methods['"]\s*=>\s*(?:['"](\w+)['"]|WP_REST_Server::(\w+))/);
-            if (methodMatch) {
-                const method = methodMatch[1] || methodMatch[2];
-                methods.push(method.toUpperCase());
-            }
+            const methods = collectRouteMethods(context);
             let permCallback = 'unknown';
             if (context.includes('__return_true')) {
                 permCallback = '__return_true';
@@ -323,8 +416,8 @@ function scanRestRoutes(phpFiles, contents, pluginPath) {
                     permCallback = 'closure';
             }
             routes.push({
-                namespace: resolveRestNamespace(match[1], content),
-                route: match[2],
+                namespace: resolveRestNamespace(match[1], content, contents),
+                route: resolveRoutePath(match[2], content, contents),
                 methods: methods.length > 0 ? methods : ['GET'],
                 permissionCallback: permCallback,
                 file: rel,

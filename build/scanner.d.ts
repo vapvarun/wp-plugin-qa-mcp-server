@@ -8,6 +8,7 @@ import type { PluginManifest, RestRouteInfo, AdminPageInfo, TemplateFileInfo, Op
  * Scan a plugin directory and return a complete PluginManifest.
  */
 export declare function scanPlugin(pluginPath: string): PluginManifest;
+export declare function scanRestRoutes(phpFiles: string[], contents: Map<string, string>, pluginPath: string): RestRouteInfo[];
 export declare function scanOptionsWiring(phpFiles: string[], contents: Map<string, string>, pluginPath: string): OptionWiringInfo[];
 export declare function scanHookListeners(phpFiles: string[], contents: Map<string, string>, pluginPath: string): HookListenerInfo[];
 export declare function scanFeatureGroups(optionsWiring: OptionWiringInfo[], restRoutes: RestRouteInfo[], templates: TemplateFileInfo[], adminPages: AdminPageInfo[], phpContents: Map<string, string>): FeatureGroupInfo[];
