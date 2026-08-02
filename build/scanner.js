@@ -207,18 +207,35 @@ function scanTaxonomies(phpFiles, contents, pluginPath) {
     return taxonomies;
 }
 // --- Scanner 4: Shortcodes ---
-function scanShortcodes(phpFiles, contents, pluginPath) {
+export function scanShortcodes(phpFiles, contents, pluginPath) {
     const shortcodes = [];
-    // Match: string callback, short-array [$this,'m'], long-array array($this,'m'), or closure
-    const pattern = /add_shortcode\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\]|array\s*\(\s*(?:[^,]+,\s*)?['"](\w+)['"]\s*\)|function\s*\()/g;
+    // The tag is resolved rather than required to be a literal: a tag registered as
+    // self::SHORTCODE used to vanish entirely (BuddyNext Pro's buddynext_members_only
+    // is the documented case — 3 reported against 4 real).
+    const pattern = /add_shortcode\s*\(/g;
     for (const file of phpFiles) {
         const content = contents.get(file) || '';
         const rel = relativePath(file, pluginPath);
         let match;
+        pattern.lastIndex = 0;
         while ((match = pattern.exec(content)) !== null) {
+            if (isCommentedOut(content, match.index))
+                continue;
+            const args = callArgs(content, match.index);
+            if (!args || args.length === 0)
+                continue;
+            const tag = resolveScalarArg(args[0], content, contents);
+            if (!tag)
+                continue;
+            const rawCb = args[1] || '';
+            const cbMatch = rawCb.match(/['"](\w+)['"]\s*\)?\s*$/);
             shortcodes.push({
-                tag: match[1],
-                callback: match[2] || match[3] || match[4] || '[closure]',
+                tag,
+                callback: /^function\s*\(|^fn\s*\(|^static\s+f/.test(rawCb)
+                    ? '[closure]'
+                    : cbMatch
+                        ? cbMatch[1]
+                        : rawCb.replace(/\s+/g, ' ').trim() || '[closure]',
                 file: rel,
                 line: getLineNumber(content, match.index),
             });
@@ -344,6 +361,158 @@ function resolveRoutePath(arg2, content, allContents) {
         return out;
     }
     return out;
+}
+// Split a PHP argument list at TOP-LEVEL commas only, so a nested call or array
+// (esc_html__( 'x', 'domain' ), array( $this, 'render' )) counts as one argument
+// rather than being sliced in half. Quotes are tracked so a comma inside a string
+// never splits.
+function splitTopLevelArgs(argsText) {
+    const args = [];
+    let depth = 0;
+    let quote = null;
+    let current = '';
+    for (let i = 0; i < argsText.length; i++) {
+        const ch = argsText[i];
+        if (quote) {
+            current += ch;
+            if (ch === '\\') {
+                if (i + 1 < argsText.length)
+                    current += argsText[++i];
+            }
+            else if (ch === quote) {
+                quote = null;
+            }
+            continue;
+        }
+        // Comments are dropped, not carried into the argument. A trailing comment is
+        // ordinary in a multi-line WordPress call — add_submenu_page() with
+        // `'', // No label, hides from submenu.` — and its comma would otherwise
+        // split one argument into two and shift every argument after it.
+        const rest = commentSkip(argsText, i);
+        if (rest !== -1) {
+            i = rest;
+            continue;
+        }
+        if (ch === "'" || ch === '"') {
+            quote = ch;
+            current += ch;
+            continue;
+        }
+        if (ch === '(' || ch === '[')
+            depth++;
+        if (ch === ')' || ch === ']')
+            depth--;
+        if (ch === ',' && depth === 0) {
+            args.push(current.trim());
+            current = '';
+            continue;
+        }
+        current += ch;
+    }
+    if (current.trim())
+        args.push(current.trim());
+    return args;
+}
+// When a comment starts at `i`, return the index of its last character so the
+// caller can skip it; otherwise -1. Handles //, #, and block comments.
+// Comments are skipped rather than parsed because their contents are prose: an
+// apostrophe in "don't" would otherwise open a string that never closes, and a
+// comma would split an argument.
+function commentSkip(text, i) {
+    const two = text.substr(i, 2);
+    if (two === '//' || text[i] === '#') {
+        const nl = text.indexOf('\n', i);
+        return nl === -1 ? text.length : nl - 1;
+    }
+    if (two === '/*') {
+        const end = text.indexOf('*/', i + 2);
+        return end === -1 ? text.length : end + 1;
+    }
+    return -1;
+}
+// Return the raw argument expressions of the call whose name match starts at
+// `callIndex`. Walks from the opening paren to its true match, so multi-line
+// calls and nested parens are handled. Returns null when the call is unbalanced
+// (truncated file), so callers skip rather than record a half-parsed row.
+function callArgs(content, callIndex) {
+    const open = content.indexOf('(', callIndex);
+    if (open === -1)
+        return null;
+    let depth = 0;
+    let quote = null;
+    for (let i = open; i < content.length; i++) {
+        const ch = content[i];
+        if (quote) {
+            if (ch === '\\')
+                i++;
+            else if (ch === quote)
+                quote = null;
+            continue;
+        }
+        // Skip comments before anything else: an apostrophe inside one ("don't")
+        // would open a string that never closes, and the walk would then run to the
+        // end of the file and return null for a perfectly well-formed call.
+        const rest = commentSkip(content, i);
+        if (rest !== -1) {
+            i = rest;
+            continue;
+        }
+        if (ch === "'" || ch === '"') {
+            quote = ch;
+            continue;
+        }
+        if (ch === '(')
+            depth++;
+        else if (ch === ')') {
+            depth--;
+            if (depth === 0)
+                return splitTopLevelArgs(content.substring(open + 1, i));
+        }
+    }
+    return null;
+}
+// True when a match sits inside a comment. With literal-only requirements gone,
+// a docblock that merely NAMES a function can otherwise satisfy the pattern and
+// record a phantom row.
+function isCommentedOut(content, index) {
+    const lineStart = content.lastIndexOf('\n', index) + 1;
+    const prefix = content.substring(lineStart, index).trim();
+    return prefix.startsWith('*') || prefix.startsWith('//') || prefix.startsWith('#');
+}
+// Unwrap a translation call so the underlying literal is visible. Handles the
+// __/esc_html__/esc_attr__/_x/esc_html_x family; for _x the first argument is
+// still the text. Anything else is returned unchanged.
+function unwrapI18n(expr) {
+    const m = expr.trim().match(/^(?:__|_e|_x|esc_html__|esc_html_e|esc_attr__|esc_attr_e|esc_html_x|esc_attr_x)\s*\(/);
+    if (!m)
+        return expr;
+    const inner = callArgs(expr, expr.indexOf('('));
+    return inner && inner.length > 0 ? inner[0] : expr;
+}
+// Resolve a PHP scalar argument to its runtime string: a quoted literal, a class
+// constant, a translation wrapper, or a concatenation of those. Returns '' when
+// nothing resolves (a plain variable), so a caller can still record the call and
+// report an honest empty rather than dropping the row entirely.
+//
+// This is the general form of the fix df1960a applied to REST routes only. The
+// same blind spot was still costing adminPages, shortcodes and cron: measured on
+// BuddyNext Pro, all 19 admin pages resolved to ZERO rows because argument 5 is
+// self::PAGE_SLUG, and BuddyNext Free's top-level menu vanished on $bn_label +
+// self::TOP_SLUG. A manifest that reports "adminPages: 0" for a plugin with 19 of
+// them answers the manifest-first question in the one direction that makes a team
+// rebuild what it already ships.
+function resolveScalarArg(expr, content, allContents) {
+    const unwrapped = unwrapI18n(expr).trim();
+    // Fast path: a whole-string literal. Taken BEFORE any concatenation handling
+    // because resolveRoutePath() splits on '.', which would shred a title that
+    // legitimately contains a period ("Analytics. Beta" -> two unresolvable halves).
+    const lit = unwrapped.match(/^'([^']*)'$|^"([^"]*)"$/);
+    if (lit)
+        return lit[1] !== undefined ? lit[1] : lit[2];
+    const konst = resolveClassConstant(unwrapped, content, allContents);
+    if (konst !== null)
+        return konst;
+    return resolveRoutePath(unwrapped, content, allContents);
 }
 // Collect EVERY method declared in a register_rest_route() args block. A merged
 // array registers several methods on one path; recording only the first made
@@ -608,48 +777,50 @@ function scanAjaxHandlers(phpFiles, contents, pluginPath) {
     return handlers;
 }
 // --- Scanner 8: Admin Pages ---
-function scanAdminPages(phpFiles, contents, pluginPath) {
+export function scanAdminPages(phpFiles, contents, pluginPath) {
     const pages = [];
-    const menuPattern = /add_menu_page\s*\(\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\])?/g;
-    const submenuPattern = /add_submenu_page\s*\(\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\])?/g;
-    const optionsPattern = /add_options_page\s*\(\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*(?:['"](\w+)['"]|\[(?:[^,]+,\s*)?['"](\w+)['"]\])?/g;
+    // Argument positions differ per function; index into the resolved arg list.
+    //   add_menu_page   ( page_title, menu_title, capability, slug, callback, … )
+    //   add_submenu_page( parent,     page_title, menu_title,  capability, slug, callback )
+    //   add_options_page( page_title, menu_title, capability, slug, callback )
+    const FORMS = [
+        { fn: 'add_menu_page', title: 0, cap: 2, slug: 3, cb: 4, parent: -1, fixedParent: '' },
+        { fn: 'add_submenu_page', title: 1, cap: 3, slug: 4, cb: 5, parent: 0, fixedParent: '' },
+        { fn: 'add_options_page', title: 0, cap: 2, slug: 3, cb: 4, parent: -1, fixedParent: 'options-general.php' },
+    ];
     for (const file of phpFiles) {
         const content = contents.get(file) || '';
         const rel = relativePath(file, pluginPath);
-        let match;
-        // Normalize i18n wrappers so regex can match string arguments
-        const normalized = content.replace(/(?:__|esc_html__|esc_attr__)\s*\(\s*(['"][^'"]*['"])\s*,\s*['"][^'"]*['"]\s*\)/g, '$1');
-        while ((match = menuPattern.exec(normalized)) !== null) {
-            pages.push({
-                slug: match[4],
-                title: match[1],
-                capability: match[3],
-                callback: match[5] || match[6] || '',
-                file: rel,
-                line: getLineNumber(content, match.index),
-            });
-        }
-        while ((match = submenuPattern.exec(normalized)) !== null) {
-            pages.push({
-                slug: match[5],
-                title: match[2],
-                capability: match[4],
-                callback: match[6] || match[7] || '',
-                parentSlug: match[1],
-                file: rel,
-                line: getLineNumber(content, match.index),
-            });
-        }
-        while ((match = optionsPattern.exec(normalized)) !== null) {
-            pages.push({
-                slug: match[4],
-                title: match[1],
-                capability: match[3],
-                callback: match[5] || match[6] || '',
-                parentSlug: 'options-general.php',
-                file: rel,
-                line: getLineNumber(content, match.index),
-            });
+        for (const form of FORMS) {
+            const pattern = new RegExp(`\\b${form.fn}\\s*\\(`, 'g');
+            let match;
+            while ((match = pattern.exec(content)) !== null) {
+                if (isCommentedOut(content, match.index))
+                    continue;
+                const args = callArgs(content, match.index);
+                // The slug is the identity of the page; without it there is no row worth
+                // recording. Everything else degrades to an empty string.
+                if (!args || args.length <= form.slug)
+                    continue;
+                const slug = resolveScalarArg(args[form.slug], content, contents);
+                if (!slug)
+                    continue;
+                const rawCb = args[form.cb] || '';
+                const cbMatch = rawCb.match(/['"](\w+)['"]\s*\)?\s*$/);
+                pages.push({
+                    slug,
+                    title: resolveScalarArg(args[form.title] || '', content, contents),
+                    capability: resolveScalarArg(args[form.cap] || '', content, contents),
+                    callback: cbMatch ? cbMatch[1] : '',
+                    ...(form.parent >= 0
+                        ? { parentSlug: resolveScalarArg(args[form.parent] || '', content, contents) }
+                        : form.fixedParent
+                            ? { parentSlug: form.fixedParent }
+                            : {}),
+                    file: rel,
+                    line: getLineNumber(content, match.index),
+                });
+            }
         }
     }
     return pages;
@@ -691,16 +862,30 @@ function scanSettings(phpFiles, contents, pluginPath) {
 // or guards an early return/WP_Error within ~200 chars after the call.
 export function scanOptionsWiring(phpFiles, contents, pluginPath) {
     const byName = new Map();
-    // Capture: fn name, option name, optional default (first arg group after the name).
-    const re = /\b(get_option|update_option|add_option|delete_option)\s*\(\s*['"]([A-Za-z0-9_]+)['"]\s*(?:,\s*([^),]+))?/g;
+    // The option name is RESOLVED, not required to be a quoted literal. Requiring a
+    // literal hid every constant-keyed option: measured on BuddyNext, 97 Free and 85
+    // Pro call sites were invisible, among them buddynext_pro_page_membership — the
+    // option that gates the membership onboarding step. An option that gates a
+    // feature but is absent from the manifest reads as "this is not wired yet".
+    const re = /\b(get_option|update_option|add_option|delete_option)\s*\(/g;
     for (const file of phpFiles) {
         const content = contents.get(file) || '';
         const rel = relativePath(file, pluginPath);
         let m;
+        re.lastIndex = 0;
         while ((m = re.exec(content)) !== null) {
+            if (isCommentedOut(content, m.index))
+                continue;
             const fn = m[1];
-            const name = m[2];
-            const rawDefault = (m[3] || '').trim();
+            const args = callArgs(content, m.index);
+            if (!args || args.length === 0)
+                continue;
+            const name = resolveScalarArg(args[0], content, contents);
+            // A name built from a runtime variable ("bn_cache_{$id}") cannot be a
+            // manifest row; skip rather than invent one.
+            if (!name || !/^[A-Za-z0-9_]+$/.test(name))
+                continue;
+            const rawDefault = (args[1] || '').trim();
             const line = getLineNumber(content, m.index);
             let row = byName.get(name);
             if (!row) {
@@ -902,31 +1087,53 @@ function scanMetaBoxes(phpFiles, contents, pluginPath) {
     return metaBoxes;
 }
 // --- Scanner 12: Cron Jobs ---
-function scanCronJobs(phpFiles, contents, pluginPath) {
+export function scanCronJobs(phpFiles, contents, pluginPath) {
     const cronJobs = [];
-    const pattern = /wp_schedule_event\s*\([^,]+,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g;
-    const singlePattern = /wp_schedule_single_event\s*\([^,]+,\s*['"]([^'"]+)['"]/g;
+    // Two schedulers, not one. Reporting only WP-Cron understated every plugin
+    // built on Action Scheduler — on BuddyNext that is 45 Free + 28 Pro jobs
+    // reported as zero, while the plugin's own docs name Action Scheduler as its
+    // async engine. Hook names are resolved, not required to be literals, because
+    // job registries reference them by class constant.
+    //
+    //   wp_schedule_event        ( timestamp, recurrence, hook )
+    //   wp_schedule_single_event ( timestamp, hook )
+    //   as_schedule_recurring_action( timestamp, interval, hook )
+    //   as_schedule_single_action   ( timestamp, hook )
+    //   as_enqueue_async_action     ( hook )
+    const FORMS = [
+        { fn: 'wp_schedule_event', hook: 2, recurrence: 1, engine: 'wp-cron' },
+        { fn: 'wp_schedule_single_event', hook: 1, recurrence: -1, engine: 'wp-cron' },
+        { fn: 'as_schedule_recurring_action', hook: 2, recurrence: 1, engine: 'action-scheduler' },
+        { fn: 'as_schedule_single_action', hook: 1, recurrence: -1, engine: 'action-scheduler' },
+        { fn: 'as_enqueue_async_action', hook: 0, recurrence: -1, engine: 'action-scheduler' },
+    ];
     for (const file of phpFiles) {
         const content = contents.get(file) || '';
         const rel = relativePath(file, pluginPath);
-        let match;
-        while ((match = pattern.exec(content)) !== null) {
-            cronJobs.push({
-                hook: match[2],
-                recurrence: match[1],
-                callback: match[2],
-                file: rel,
-                line: getLineNumber(content, match.index),
-            });
-        }
-        while ((match = singlePattern.exec(content)) !== null) {
-            cronJobs.push({
-                hook: match[1],
-                recurrence: 'single',
-                callback: match[1],
-                file: rel,
-                line: getLineNumber(content, match.index),
-            });
+        for (const form of FORMS) {
+            const pattern = new RegExp(`\\b${form.fn}\\s*\\(`, 'g');
+            let match;
+            while ((match = pattern.exec(content)) !== null) {
+                if (isCommentedOut(content, match.index))
+                    continue;
+                const args = callArgs(content, match.index);
+                if (!args || args.length <= form.hook)
+                    continue;
+                const hook = resolveScalarArg(args[form.hook], content, contents);
+                if (!hook)
+                    continue;
+                const recurrence = form.recurrence >= 0 && args[form.recurrence]
+                    ? resolveScalarArg(args[form.recurrence], content, contents) || 'interval'
+                    : 'single';
+                cronJobs.push({
+                    hook,
+                    recurrence,
+                    callback: hook,
+                    engine: form.engine,
+                    file: rel,
+                    line: getLineNumber(content, match.index),
+                });
+            }
         }
     }
     return cronJobs;
