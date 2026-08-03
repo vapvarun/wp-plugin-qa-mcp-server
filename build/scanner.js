@@ -566,10 +566,26 @@ export function scanRestRoutes(phpFiles, contents, pluginPath) {
             // Skip a mention inside a comment. Now that the path no longer has to be
             // a quoted literal, a docblock that merely NAMES register_rest_route()
             // can satisfy the pattern and record a phantom route with no path.
+            //
+            // `continue` alone is NOT enough, and that was silent data loss. The route
+            // group is lazy but still runs to the next `, array(`, which for a comment
+            // mention is typically INSIDE the next genuine registration - so the
+            // phantom match consumes a real route, and skipping without rewinding
+            // discards it. It cost BuddyNext three routes: /feed/home, where a
+            // docblock explaining validate_callback swallowed the registration 36
+            // lines below it, and two in ModerationController, where comments about
+            // how WordPress merges duplicate registrations ate the very registrations
+            // they described. Each was absent from the manifest rather than flagged,
+            // which under the manifest-first rule reads as "not built yet".
+            //
+            // Rewinding to just past the phantom start lets the genuine registration
+            // inside the consumed span be found on the next pass.
             const lineStart = content.lastIndexOf('\n', match.index) + 1;
             const linePrefix = content.substring(lineStart, match.index).trim();
-            if (linePrefix.startsWith('*') || linePrefix.startsWith('//') || linePrefix.startsWith('#'))
+            if (linePrefix.startsWith('*') || linePrefix.startsWith('//') || linePrefix.startsWith('#')) {
+                pattern.lastIndex = match.index + 1;
                 continue;
+            }
             const contextEnd = Math.min(match.index + 1500, content.length);
             const context = content.substring(match.index, contextEnd);
             const methods = collectRouteMethods(context);
