@@ -4,22 +4,120 @@
  * <pluginPath>/audit/manifest.json. This is the onboard step — the scanner is the
  * single deterministic generator for every plugin (no agent prose).
  *
- *   node bin/write-manifest.mjs /abs/path/to/plugin
+ *   node bin/write-manifest.mjs /abs/path/to/plugin [--out <file>] [--force]
  *
  * Volatile fields (timestamp, absolute path) are stripped so the committed manifest
  * is churn-free and machine-independent.
+ *
+ * ── Why this refuses to write sometimes ──────────────────────────────────────
+ *
+ * Not every plugin keeps its manifest where this generator wants to put it, and
+ * not every manifest is ours. Two shapes exist in the portfolio today:
+ *
+ *   audit/manifest.json            — generated, schema v3-functional (18 plugins)
+ *   audit/manifests/manifest.json  — hand-curated, schema v2.2 (WPMediaVerse)
+ *
+ * WPMediaVerse moved to the curated layout deliberately (its `1.2.1: consolidate
+ * docs / QA / audit into structured tree` commit) and its release gate reads that
+ * curated file. Running this generator there used to silently recreate the retired
+ * `audit/manifest.json`, leaving TWO manifests with different schemas: the release
+ * gate reading one, portfolio tooling reading the other, neither agreeing. Nothing
+ * reported a problem — the failure only showed up later as gates passing on a map
+ * that no longer described the plugin.
+ *
+ * So: writing is refused when the target holds a manifest this generator did not
+ * write, or when a curated manifest exists elsewhere in the tree. Both are
+ * overridable — `--force` to overwrite, `--out` to target a path deliberately —
+ * because the point is to stop SILENT clobbering, not to block a decision someone
+ * has actually made.
  */
 
 import { scanPlugin } from '../build/scanner.js';
 import { analyzeTemplateContracts, analyzeTemplateHygiene } from '../build/template-contract-checker.js';
 import { assessReadiness } from '../build/readiness-checklist.js';
-import { writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { join, dirname, isAbsolute, resolve } from 'path';
 
-const pluginPath = process.argv[2];
+const argv = process.argv.slice(2);
+const flag = (name) => {
+  const i = argv.indexOf(name);
+  return i === -1 ? null : (argv[i + 1] ?? '');
+};
+const has = (name) => argv.includes(name);
+
+const pluginPath = argv.find((a) => !a.startsWith('--') && argv[argv.indexOf(a) - 1] !== '--out');
 if (!pluginPath) {
-  process.stderr.write('usage: node bin/write-manifest.mjs <pluginPath>\n');
+  process.stderr.write('usage: node bin/write-manifest.mjs <pluginPath> [--out <file>] [--force]\n');
   process.exit(1);
+}
+
+const SCHEMA = 'v3-functional';
+
+/**
+ * Read a manifest's schema tag without throwing on unparseable or foreign files.
+ *
+ * Returns the schema string when this generator wrote it, 'unknown' when the file
+ * exists but carries no recognisable tag (treated as foreign — safer to stop than
+ * to guess), or null when there is no file.
+ */
+const schemaOf = (file) => {
+  if (!existsSync(file)) return null;
+  try {
+    const j = JSON.parse(readFileSync(file, 'utf8'));
+    return j?.generated?.schema || j?.generated?.schema_version || j?.schema_version || j?.$schema || 'unknown';
+  } catch {
+    return 'unparseable';
+  }
+};
+
+const outFlag = flag('--out');
+const outFile = outFlag
+  ? (isAbsolute(outFlag) ? outFlag : resolve(process.cwd(), outFlag))
+  : join(pluginPath, 'audit', 'manifest.json');
+
+const bail = (lines) => {
+  process.stderr.write(lines.join('\n') + '\n');
+  process.exit(2);
+};
+
+if (!has('--force') && !outFlag) {
+  // Guard A — a curated manifest lives elsewhere in this plugin's tree. Writing
+  // our default path would shadow it rather than update it.
+  const curated = join(pluginPath, 'audit', 'manifests', 'manifest.json');
+  if (existsSync(curated)) {
+    bail([
+      'REFUSING TO WRITE — this plugin uses the curated manifest layout.',
+      '',
+      `  curated manifest : ${curated} (schema ${schemaOf(curated)})`,
+      `  would have written: ${outFile} (schema ${SCHEMA})`,
+      '',
+      'Writing here would leave two manifests with different schemas — the release',
+      'gate reads the curated one, portfolio tooling reads the generated one, and',
+      'they drift apart silently.',
+      '',
+      'Do one of:',
+      '  • reconcile the curated manifest by targeted delta (recommended), or',
+      '  • node bin/write-manifest.mjs <plugin> --out <path>   to place it deliberately, or',
+      '  • node bin/write-manifest.mjs <plugin> --force        to overwrite anyway',
+    ]);
+  }
+
+  // Guard B — the target exists but was not written by this generator.
+  const found = schemaOf(outFile);
+  if (found && found !== SCHEMA) {
+    bail([
+      'REFUSING TO OVERWRITE — the existing manifest is not ours.',
+      '',
+      `  file    : ${outFile}`,
+      `  schema  : ${found}`,
+      `  expected: ${SCHEMA}`,
+      '',
+      'This is a hand-maintained or foreign-schema manifest. Overwriting it would',
+      'discard curated content and can break release gates that read its shape.',
+      '',
+      'Re-run with --force if replacing it is genuinely what you want.',
+    ]);
+  }
 }
 
 const m = scanPlugin(pluginPath);
@@ -86,9 +184,9 @@ m.template_components = {
 // checklist over the portfolio standard, with a meets/below-bar verdict.
 m.readiness = assessReadiness(pluginPath, m);
 
-const outDir = join(pluginPath, 'audit');
-mkdirSync(outDir, { recursive: true });
-const outFile = join(outDir, 'manifest.json');
+// outFile was resolved up top (default, or --out) so the write-guards above could
+// inspect the target before the scan cost was paid.
+mkdirSync(dirname(outFile), { recursive: true });
 const json = JSON.stringify(m, null, 2) + '\n';
 writeFileSync(outFile, json);
 process.stdout.write(`wrote ${(json.length / 1024).toFixed(0)}KB → ${outFile}\n`);
