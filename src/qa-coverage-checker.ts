@@ -457,12 +457,22 @@ function checkCron(
   manifest: Record<string, unknown>,
   corpus: string
 ): CoverageStats {
-  const cron = (manifest.cron as Array<Record<string, unknown>>) ?? [];
+  // The manifest writer emits `cron` as a flat list of hook NAMES
+  // (write-manifest.mjs: `m.cron = (f.cronJobs || []).map((c) => c.hook)`), the
+  // same way it flattens blocks, shortcodes and tables. Reading each entry as an
+  // object therefore left both `name` and `hook` undefined, the `if (!name)
+  // continue` below skipped every row, and the category reported total 0 —
+  // indistinguishable from "this plugin schedules nothing".
+  //
+  // BuddyNext Pro has 21 cron entries and this reported 0 of them, in a report
+  // whose entire job is to say what is untested. Accept both shapes: a bare
+  // string, or an object keyed name/hook should a future writer enrich it.
+  const cron = (manifest.cron as Array<string | Record<string, unknown>>) ?? [];
   const covered: Array<Record<string, unknown>> = [];
   const uncovered: Array<Record<string, unknown>> = [];
 
   for (const c of cron) {
-    const name = String(c.name ?? c.hook ?? '');
+    const name = typeof c === 'string' ? c : String(c?.name ?? c?.hook ?? '');
     if (!name) continue;
     const isCovered =
       corpus.includes(`'${name}'`) || corpus.includes(`"${name}"`);
