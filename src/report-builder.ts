@@ -22,6 +22,7 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
   'admin-eval': 12,
   'frontend-eval': 10,
   'marketing': 8,
+  'performance-scale': 9,
 };
 
 export function buildReport(

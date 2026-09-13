@@ -51,6 +51,7 @@ export declare class WpPluginQaServer {
     private handleCheckVisualRegression;
     private handleCheckEnumConsistency;
     private handleCheckRestJsContract;
+    private handleCheckScale;
     private handleCheckEditorLayoutBias;
     private handleCheckA11y;
     private handleEvaluateProduct;

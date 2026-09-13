@@ -41,6 +41,7 @@ import { checkPluginDevRules } from './plugin-dev-rules-checker.js';
 import { checkQaCoverage } from './qa-coverage-checker.js';
 import { checkVisualRegression } from './visual-regression-checker.js';
 import { checkEnumConsistency } from './enum-consistency-checker.js';
+import { checkScale } from './perf-scale-checker.js';
 import { checkRestJsContract } from './rest-js-contract-checker.js';
 import { checkEditorLayoutBias } from './editor-layout-bias-checker.js';
 import { initJourneys, getBriefing as getAuditBriefing, consolidateMatrix as consolidateAuditMatrix, coverageCheck as auditCoverageCheck, } from './journey-audit.js';
@@ -154,6 +155,8 @@ export class WpPluginQaServer {
                         return this.handleCheckRestJsContract(toolArgs.plugin_path);
                     case 'wppqa_check_editor_layout_bias':
                         return this.handleCheckEditorLayoutBias(toolArgs.plugin_path);
+                    case 'wppqa_check_scale':
+                        return this.handleCheckScale(toolArgs.plugin_path);
                     // 20. Full Audit (master tool)
                     case 'wppqa_audit_plugin':
                         return await this.handleAuditPlugin(toolArgs.plugin_path, toolArgs.site_url, toolArgs.format);
@@ -386,6 +389,12 @@ export class WpPluginQaServer {
         if (!pluginPath)
             return this.errorResult('plugin_path is required');
         const result = checkRestJsContract(pluginPath);
+        return this.formatCheckerResult(result);
+    }
+    handleCheckScale(pluginPath) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkScale(this.getCachedManifest(pluginPath));
         return this.formatCheckerResult(result);
     }
     handleCheckEditorLayoutBias(pluginPath) {

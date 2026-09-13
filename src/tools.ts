@@ -593,6 +593,23 @@ const allTools: Tool[] = [
     },
   },
 
+  // ─── 19c-2. Big-site / performance scale ────────────────────────
+  {
+    name: 'wppqa_check_scale',
+    description:
+      "Deterministic gate for the portfolio 'big-site readiness' bar (lists must work at 2000+ rows on day one). Static analysis over the plugin/theme PHP, keyed off the CREATE TABLE definitions and $wpdb usage it actually contains — a target with no custom tables and no direct SQL degrades to skipped (absence is not a defect). Four checks: (1) missing-index — a WHERE/ORDER BY/JOIN column on a custom table with no index leading with it (full table scan at scale); (2) unbounded-read — a multi-row SELECT on a custom table with no LIMIT; (3) count-via-listall — count() wrapping a get_all/list_all/get_results instead of SELECT COUNT(*); (4) n-plus-one — a query call (\\$wpdb, get_*_meta, WP_Query, get_posts) inside a foreach/for/while body. Regex-based, precision-over-recall: only tables it found a schema for are index-checked. Pair with a WP-CLI-seeded 1000+ row fixture for the behavioral checks (filter/sort, concurrency) that static analysis can't prove.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Absolute path to the WordPress plugin or theme directory',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
   // ─── 19d. REST ↔ JS contract drift ──────────────────────────────
   {
     name: 'wppqa_check_rest_js_contract',

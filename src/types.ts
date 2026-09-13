@@ -399,7 +399,8 @@ export type TestCategory =
   | 'rest-flow'
   | 'canonical-usage'
   | 'template-usage'
-  | 'logic-flow';
+  | 'logic-flow'
+  | 'performance-scale';
 
 export interface TestItem {
   id: string;

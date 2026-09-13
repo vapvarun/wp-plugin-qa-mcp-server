@@ -63,16 +63,17 @@ readiness — a green run can mean a check silently skipped (see coverage map §
 |---|---|---|---|
 | 4.1 | dbDelta hygiene: `$wpdb->prefix`, PRIMARY KEY, `charset_collate`, `upgrade.php` | AUTO | db-checker |
 | 4.2 | Uninstall removes every table/option; large options `autoload=false`; no orphan options/transients | AUTO | db-checker |
-| 4.3 | **Every WHERE/ORDER BY/JOIN column has a secondary index** | MANUAL | db-checker checks PRIMARY KEY only |
-| 4.4 | **Every list query has LIMIT+OFFSET; counts use `COUNT(*)`, never `count(list_all())`** | MANUAL | not checked |
-| 4.5 | **No N+1 — per-row queries inside `foreach` are batch-fetched** | MANUAL | not checked |
-| 4.6 | **Shared reads are cached with a clear invalidation path on writes** | MANUAL | not checked |
-| 4.7 | **Lists offer filter-by-* and sort-by-* on the primary discriminator** | MANUAL | not checked |
-| 4.8 | **UI handles multi-actor concurrency (already-resolved/deleted/taken)** | MANUAL | not checked |
+| 4.3 | **Every WHERE/ORDER BY/JOIN column on a custom table has a secondary index** | AUTO | perf-scale-checker (`missing-index`) |
+| 4.4 | **Every list query has LIMIT; counts use `COUNT(*)`, never `count(list_all())`** | AUTO | perf-scale-checker (`unbounded-read`, `count-via-listall`) |
+| 4.5 | **No N+1 — per-row queries inside a loop are batch-fetched** | AUTO | perf-scale-checker (`n-plus-one`) |
+| 4.6 | **Shared reads are cached with a clear invalidation path on writes** | MANUAL | not checked (roadmap Wave 1.5) |
+| 4.7 | **Lists offer filter-by-* and sort-by-* on the primary discriminator** | MANUAL | behavioral — seeded-fixture journey |
+| 4.8 | **UI handles multi-actor concurrency (already-resolved/deleted/taken)** | MANUAL | behavioral — seeded-fixture journey |
 
-> §4.3–4.8 is the portfolio big-site checklist. It is entirely MANUAL today —
-> seed 1000+ posts / 500+ users with WP-CLI and verify by hand until the tool
-> roadmap closes it. Do not accept "looks fine on 5 rows."
+> §4.3–4.5 are now enforced statically by `wppqa_check_scale` (keyed off the
+> plugin's own CREATE TABLE + `$wpdb` usage; skips a target with no custom
+> tables). §4.6–4.8 remain MANUAL — seed 1000+ posts / 500+ users with WP-CLI
+> and verify by hand. Do not accept "looks fine on 5 rows."
 
 ## 5. UX / design system
 

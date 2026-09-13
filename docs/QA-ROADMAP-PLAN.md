@@ -56,11 +56,15 @@ Add visitors emitting new `PhpFacts` arrays, ingested by `ingestPhpFacts`:
 
 ---
 
-## Wave 1 — Big-site / performance-scale (largest gap)
+## Wave 1 — Big-site / performance-scale (largest gap) — SHIPPED (regex)
 
 New module `src/perf-scale-checker.ts`, category `performance-scale`, tool
-`wppqa_check_scale`. Consumes S0a. Reuses `classifyDbAccess`/`parseColumnNames`
-from data-cross-reference.ts. **Degrades to skip when `dbTables` is empty.**
+`wppqa_check_scale`. **Delivered** as a self-contained regex checker (1.1–1.4
+below) with unit tests, verified on real code (found true-positive N+1s in
+bp-business-profile). Degrades to `skipped` when there are no custom tables and
+no `$wpdb`. **Pending upgrade:** move SQL/CREATE-TABLE/loop extraction to the
+S0a PHP-AST sidecar to cut regex false-negatives (e.g. `$table` var indirection
+the normalizer can't resolve today), and add 1.5/1.6 cache checks.
 
 | # | Check | Severity | Data |
 |---|---|---|---|
