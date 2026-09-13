@@ -141,6 +141,8 @@ export interface CronJobInfo {
   hook: string;
   recurrence: string;
   callback: string;
+  /** Which scheduler runs it: WP-Cron or Action Scheduler. */
+  engine?: 'wp-cron' | 'action-scheduler';
   file: string;
   line: number;
 }

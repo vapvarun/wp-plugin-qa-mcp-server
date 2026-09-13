@@ -170,6 +170,40 @@ const allTools = [
             required: ['plugin_path'],
         },
     },
+    // ─── 8c. Readiness Scorecard ("the bar") ─────────────────────
+    {
+        name: 'wppqa_readiness',
+        description: 'Autonomous readiness scorecard — point it at any plugin and it reports what is PRESENT, MISSING, or FAILING against one portfolio standard ("the bar"), with a 0-100 score and a meets/below-bar verdict. No need to know which individual check to run: it folds the cross-layer template-contract + zero-logic checks and manifest signals together with a presence-based standards checklist (uninstall, readme+changelog, i18n, WPCS, PHPStan, PHPUnit tests, CI, REST, docs/qa runbook + qa-config, audit/manifest.json, contract-audit baseline, journeys, docs). The bar is config-driven per plugin via audit/readiness-bar.json (override which items are required, or disable items). Use to gate a release, audit a freshly cloned plugin, or hold every plugin to the same standard.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
+    // ─── 8d. Readiness Portfolio Monitor ─────────────────────────
+    {
+        name: 'wppqa_readiness_portfolio',
+        description: 'Cross-portfolio readiness monitor — runs the readiness bar across MANY plugins at once and returns a ranked dashboard (worst-first) of each plugin\'s score, meets/below-bar verdict, and required gaps. Provide plugins_root (a directory such as wp-content/plugins or a repos folder — it auto-discovers every plugin under it) OR plugin_paths (an explicit list of plugin directories). Use to see at a glance which plugins are below the standard and what each is missing, so every plugin can be held to the same bar.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugins_root: {
+                    type: 'string',
+                    description: 'Absolute path to a directory containing plugins (auto-discovers each plugin subdir). Either this or plugin_paths is required.',
+                },
+                plugin_paths: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Explicit list of absolute plugin directory paths. Overrides plugins_root when provided.',
+                },
+            },
+        },
+    },
     // ─── 9. API (live site) ───────────────────────────────────────
     {
         name: 'wppqa_check_api',

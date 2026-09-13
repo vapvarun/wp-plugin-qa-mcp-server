@@ -25,6 +25,7 @@ import { checkBrowser } from './browser-runner.js';
 import { checkUx } from './ux-checker.js';
 import { checkTemplates } from './template-checker.js';
 import { checkTemplateContracts } from './template-contract-checker.js';
+import { assessReadiness, formatReadiness, discoverPlugins, assessReadinessPortfolio, formatPortfolio } from './readiness-checklist.js';
 import { checkAccessibility } from './a11y-checker.js';
 import { evaluateAdmin } from './admin-evaluator.js';
 import { evaluateFrontend } from './frontend-evaluator.js';
@@ -137,6 +138,10 @@ export class WpPluginQaServer {
             return this.handleCheckTemplates(toolArgs.plugin_path as string);
           case 'wppqa_check_template_contract':
             return this.handleCheckTemplateContract(toolArgs.plugin_path as string);
+          case 'wppqa_readiness':
+            return this.handleReadiness(toolArgs.plugin_path as string);
+          case 'wppqa_readiness_portfolio':
+            return this.handleReadinessPortfolio(toolArgs.plugins_root as string | undefined, toolArgs.plugin_paths as string[] | undefined);
 
           // 9-11. Live site checks
           case 'wppqa_check_api':
@@ -319,6 +324,19 @@ export class WpPluginQaServer {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const result = checkTemplateContracts(pluginPath);
     return this.formatCheckerResult(result);
+  }
+
+  private handleReadiness(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const manifest = scanPlugin(pluginPath);
+    const sc = assessReadiness(pluginPath, manifest);
+    return this.successResult(formatReadiness(sc, manifest.header?.name ?? 'plugin'));
+  }
+
+  private handleReadinessPortfolio(root: string | undefined, paths: string[] | undefined): CallToolResult {
+    const list = Array.isArray(paths) && paths.length ? paths : (root ? discoverPlugins(root) : []);
+    if (!list.length) return this.errorResult('Provide plugins_root (a directory to scan) or plugin_paths (an explicit list).');
+    return this.successResult(formatPortfolio(assessReadinessPortfolio(list)));
   }
 
   private handleCheckWiringCompleteness(pluginPath: string): CallToolResult {
