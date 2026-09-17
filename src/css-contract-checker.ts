@@ -52,8 +52,8 @@
  *     "ignore": ["prefix-", "some-exact-class"] }
  */
 
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import { join, resolve } from 'path';
 import type { CheckerResult, CheckerIssue } from './types.js';
 import {
   findPhpFiles,
@@ -70,6 +70,12 @@ interface CssContractConfig {
   ignore?: string[];
   /** Override when a plugin's CSS prefix cannot be inferred (rare). */
   prefix?: string;
+  /**
+   * A plugin whose stylesheets this one relies on at runtime, relative to the
+   * plugin directory. Auto-detected for a `-pro` plugin sitting beside its free
+   * sibling; set it when the pair is named some other way.
+   */
+  extends?: string;
 }
 
 /**
@@ -160,8 +166,22 @@ function collectDefinitions(
     } catch {
       continue;
     }
-    if (!/<style\b/i.test(src)) continue;
     const base = file.split('/').pop() ?? file;
+
+    // A custom property set on the element itself is a definition, and it is
+    // the normal way to pass a per-row value into CSS: a category colour, a
+    // progress width, a computed column count. Only assets/css was read, so
+    // every one of these looked undefined.
+    for (const attr of src.matchAll(/style\s*=\s*["']([^"']*)["']/g)) {
+      for (const m of attr[1].matchAll(tokenRe)) tokens.add(m[1]);
+    }
+    for (const m of src.matchAll(
+      new RegExp(`setProperty\\(\\s*['"\`](--${prefix}[A-Za-z0-9-]+)`, 'g')
+    )) {
+      tokens.add(m[1]);
+    }
+
+    if (!/<style\b/i.test(src)) continue;
     for (const block of src.matchAll(styleRe)) {
       const css = block[1].replace(/\/\*[\s\S]*?\*\//g, '');
       for (const m of css.matchAll(classRe)) {
@@ -206,9 +226,15 @@ function collectUsage(
   files: string[],
   projectPath: string,
   prefix: string
-): { classes: Map<string, NameUse[]>; tokens: Map<string, NameUse[]> } {
+): {
+  classes: Map<string, NameUse[]>;
+  tokens: Map<string, NameUse[]>;
+  companions: Map<string, Set<string>>;
+} {
   const classes = new Map<string, NameUse[]>();
   const tokens = new Map<string, NameUse[]>();
+  // Every other prefixed class sharing a class attribute with this one.
+  const companions = new Map<string, Set<string>>();
 
   const attrRe = /(?:class\s*=\s*["']|className\s*=\s*["']|classList\.add\(\s*["'])([^"']+)/g;
   const varRe = new RegExp(`var\\(\\s*(--${prefix}[A-Za-z0-9-]+)`, 'g');
@@ -226,6 +252,14 @@ function collectUsage(
     for (const m of src.matchAll(attrRe)) {
       const value = m[1];
       if (dynamic.test(value)) continue;
+      const named = value.split(/\s+/).filter((c) => c.startsWith(prefix));
+      for (const cls of named) {
+        for (const other of named) {
+          if (other === cls) continue;
+          if (!companions.has(cls)) companions.set(cls, new Set());
+          companions.get(cls)!.add(other);
+        }
+      }
       for (const cls of value.split(/\s+/)) {
         if (!cls.startsWith(prefix)) continue;
         // `'x-toast x-toast--' + type` and `'x-badge--' . $status` both leave a
@@ -241,7 +275,7 @@ function collectUsage(
       tokens.get(m[1])!.push({ file: rel, line: getLineNumber(src, m.index ?? 0) });
     }
   }
-  return { classes, tokens };
+  return { classes, tokens, companions };
 }
 
 /**
@@ -312,6 +346,22 @@ export function checkCssContract(pluginPath: string): CheckerResult {
 
   const config = loadConfig(pluginPath);
   const cssFiles = findFilesByExt(pluginPath, '.css');
+
+  // A Pro add-on does not carry its own design tokens: the free plugin is a hard
+  // dependency and its design-system.css is already on the page. Checking Pro in
+  // isolation reported every shared token as undefined - 57 of them on one
+  // plugin, all of them fine - which is how a checker teaches people to ignore it.
+  const base = pluginPath.replace(/\/+$/, '');
+  const inherited: string[] = [];
+  const sibling = config.extends
+    ? resolve(base, config.extends)
+    : /-pro$/.test(base)
+      ? base.replace(/-pro$/, '')
+      : null;
+  if (sibling && sibling !== base && existsSync(sibling)) {
+    inherited.push(...findFilesByExt(sibling, '.css'));
+  }
+
   if (cssFiles.length === 0) {
     return {
       category: 'stylelint',
@@ -344,7 +394,7 @@ export function checkCssContract(pluginPath: string): CheckerResult {
   const jsFiles = findJsFiles(pluginPath).filter((f) => !f.endsWith('.min.js'));
   const markupFiles = [...phpFiles, ...jsFiles];
 
-  const { classes: defined, tokens: definedTokens } = collectDefinitions(cssFiles, prefix, markupFiles);
+  const { classes: defined, tokens: definedTokens } = collectDefinitions([...cssFiles, ...inherited], prefix, markupFiles);
 
   // A prefix that matches nothing is a wrong guess, not a plugin with no CSS.
   if (defined.size === 0 && definedTokens.size === 0) {
@@ -358,7 +408,7 @@ export function checkCssContract(pluginPath: string): CheckerResult {
     };
   }
 
-  const { classes: used, tokens: usedTokens } = collectUsage(markupFiles, pluginPath, prefix);
+  const { classes: used, tokens: usedTokens, companions } = collectUsage(markupFiles, pluginPath, prefix);
   const behaviourHooks = collectBehaviourHooks(jsFiles, phpFiles, prefix);
 
   // Stylesheets ask for tokens too, and that is where the dark-mode bugs live.
@@ -422,7 +472,13 @@ export function checkCssContract(pluginPath: string): CheckerResult {
     const first = uses[0];
 
     if (!where) {
-      const isControl = looksLikeControl(cls);
+      // A class sharing its element with a class that IS styled is not bare: the
+      // base carries the look and this one adds a modifier or a JS hook. The
+      // element still renders, so it is not the theme-decides defect - but a
+      // modifier with no rule means the distinction it exists to draw (a LATE
+      // badge against an ordinary one) is not being drawn, so it is not nothing.
+      const base = [...(companions.get(cls) ?? [])].filter((c) => defined.has(c));
+      const isControl = looksLikeControl(cls) && base.length === 0;
       issues.push({
         id: generateTestId('css-contract'),
         category: 'stylelint',
@@ -433,8 +489,12 @@ export function checkCssContract(pluginPath: string): CheckerResult {
         title: `Undefined ${isControl ? 'control' : 'class'}: .${cls}`,
         message:
           `.${cls} is used in ${uses.length} place(s) in the markup and has no rule in any ` +
-          `stylesheet, so the host theme decides how it renders. This is invisible in a diff ` +
-          `and passes every linter.`,
+          `stylesheet` +
+          (base.length
+            ? `. It shares its element with .${base[0]}, which is styled, so the element still ` +
+              `renders - but whatever this class was added to change, it does not change.`
+            : `, so the host theme decides how it renders`) +
+          `. This is invisible in a diff and passes every linter.`,
         file: first.file,
         line: first.line,
         code: `class="${cls}"`,
