@@ -115,11 +115,37 @@ function loadConfig(pluginPath) {
  * Comments are stripped first so a name merely discussed in prose does not
  * count as defined -- this file is full of such prose itself.
  */
-function collectDefinitions(cssFiles, prefix) {
+function collectDefinitions(cssFiles, prefix, markupFiles = []) {
     const classes = new Map();
     const tokens = new Set();
     const classRe = new RegExp(`\\.(${prefix}[A-Za-z0-9_-]+)`, 'g');
     const tokenRe = new RegExp(`(--${prefix}[A-Za-z0-9-]+)\\s*:`, 'g');
+    // A rule inside a template's own <style> block is as real as one in a
+    // stylesheet, and it ships on exactly the surface that uses it. Reading only
+    // assets/css reported a class defined six lines above its own markup.
+    const styleRe = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+    for (const file of markupFiles) {
+        let src;
+        try {
+            src = readFileSync(file, 'utf-8');
+        }
+        catch {
+            continue;
+        }
+        if (!/<style\b/i.test(src))
+            continue;
+        const base = file.split('/').pop() ?? file;
+        for (const block of src.matchAll(styleRe)) {
+            const css = block[1].replace(/\/\*[\s\S]*?\*\//g, '');
+            for (const m of css.matchAll(classRe)) {
+                if (!classes.has(m[1]))
+                    classes.set(m[1], new Set());
+                classes.get(m[1]).add(base);
+            }
+            for (const m of css.matchAll(tokenRe))
+                tokens.add(m[1]);
+        }
+    }
     for (const file of cssFiles) {
         const base = file.split('/').pop() ?? file;
         if (!isAuthoredSheet(base))
@@ -172,6 +198,11 @@ function collectUsage(files, projectPath, prefix) {
                 continue;
             for (const cls of value.split(/\s+/)) {
                 if (!cls.startsWith(prefix))
+                    continue;
+                // `'x-toast x-toast--' + type` and `'x-badge--' . $status` both leave a
+                // stub ending in a hyphen once the quote closes. The name is completed
+                // at runtime, so reporting the stub is reporting a class nobody wrote.
+                if (cls.endsWith('-'))
                     continue;
                 if (!classes.has(cls))
                     classes.set(cls, []);
@@ -272,7 +303,10 @@ export function checkCssContract(pluginPath) {
             duration: Date.now() - start,
         };
     }
-    const { classes: defined, tokens: definedTokens } = collectDefinitions(cssFiles, prefix);
+    const phpFiles = findPhpFiles(pluginPath);
+    const jsFiles = findJsFiles(pluginPath).filter((f) => !f.endsWith('.min.js'));
+    const markupFiles = [...phpFiles, ...jsFiles];
+    const { classes: defined, tokens: definedTokens } = collectDefinitions(cssFiles, prefix, markupFiles);
     // A prefix that matches nothing is a wrong guess, not a plugin with no CSS.
     if (defined.size === 0 && definedTokens.size === 0) {
         return {
@@ -284,9 +318,6 @@ export function checkCssContract(pluginPath) {
             duration: Date.now() - start,
         };
     }
-    const phpFiles = findPhpFiles(pluginPath);
-    const jsFiles = findJsFiles(pluginPath).filter((f) => !f.endsWith('.min.js'));
-    const markupFiles = [...phpFiles, ...jsFiles];
     const { classes: used, tokens: usedTokens } = collectUsage(markupFiles, pluginPath, prefix);
     const behaviourHooks = collectBehaviourHooks(jsFiles, phpFiles, prefix);
     // Stylesheets ask for tokens too, and that is where the dark-mode bugs live.
@@ -301,6 +332,10 @@ export function checkCssContract(pluginPath) {
         catch {
             continue;
         }
+        // Prose naming a token is not a request for it. frontend.css documents the
+        // old `var(--x-x, #fff)` form in a comment; unstripped, the checker reported
+        // `--x-x` as an undefined token against the very comment warning about it.
+        src = src.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
         const varRe = new RegExp(`var\\(\\s*(--${prefix}[A-Za-z0-9-]+)`, 'g');
         for (const m of src.matchAll(varRe)) {
             if (!usedTokens.has(m[1]))
