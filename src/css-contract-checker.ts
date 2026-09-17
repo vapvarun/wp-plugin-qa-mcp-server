@@ -65,6 +65,9 @@ import {
   fileExists,
 } from './shared-utils.js';
 
+/** Marker companion meaning "the element is styled by something we do not own". */
+const PLATFORM_STYLED = '\u0000platform';
+
 interface CssContractConfig {
   universal_sheets?: string[];
   ignore?: string[];
@@ -237,6 +240,21 @@ function collectUsage(
   const companions = new Map<string, Set<string>>();
 
   const attrRe = /(?:class\s*=\s*["']|className\s*=\s*["']|classList\.add\(\s*["'])([^"']+)/g;
+  // Classes the host platform styles. An element carrying one of these is not
+  // unstyled - WordPress draws it - and the prefixed class beside it is a hook.
+  const platform = new Set([
+    'button',
+    'button-primary',
+    'button-secondary',
+    'button-link',
+    'notice',
+    'widefat',
+    'striped',
+    'regular-text',
+    'dashicons',
+    'components-button',
+    'form-table',
+  ]);
   const varRe = new RegExp(`var\\(\\s*(--${prefix}[A-Za-z0-9-]+)`, 'g');
   const dynamic = /<\?php|\$\{|\{\{|\.\s*\$|\$\w+\s*\./;
 
@@ -253,6 +271,21 @@ function collectUsage(
       const value = m[1];
       if (dynamic.test(value)) continue;
       const named = value.split(/\s+/).filter((c) => c.startsWith(prefix));
+      // Does the element itself carry its look - a platform class, or a style
+      // attribute on the same tag? Either way the prefixed class is not what
+      // stands between this element and the theme.
+      const at = m.index ?? 0;
+      const tagStart = src.lastIndexOf('<', at);
+      const tagEnd = src.indexOf('>', at);
+      const tag = tagStart >= 0 && tagEnd > tagStart ? src.slice(tagStart, tagEnd) : '';
+      const selfStyled =
+        /\sstyle\s*=/.test(tag) || value.split(/\s+/).some((c) => platform.has(c));
+      if (selfStyled) {
+        for (const cls of named) {
+          if (!companions.has(cls)) companions.set(cls, new Set());
+          companions.get(cls)!.add(PLATFORM_STYLED);
+        }
+      }
       for (const cls of named) {
         for (const other of named) {
           if (other === cls) continue;
@@ -477,8 +510,10 @@ export function checkCssContract(pluginPath: string): CheckerResult {
       // element still renders, so it is not the theme-decides defect - but a
       // modifier with no rule means the distinction it exists to draw (a LATE
       // badge against an ordinary one) is not being drawn, so it is not nothing.
-      const base = [...(companions.get(cls) ?? [])].filter((c) => defined.has(c));
-      const isControl = looksLikeControl(cls) && base.length === 0;
+      const withCls = companions.get(cls) ?? new Set<string>();
+      const base = [...withCls].filter((c) => defined.has(c));
+      const platformStyled = withCls.has(PLATFORM_STYLED);
+      const isControl = looksLikeControl(cls) && base.length === 0 && !platformStyled;
       issues.push({
         id: generateTestId('css-contract'),
         category: 'stylelint',
@@ -490,7 +525,10 @@ export function checkCssContract(pluginPath: string): CheckerResult {
         message:
           `.${cls} is used in ${uses.length} place(s) in the markup and has no rule in any ` +
           `stylesheet` +
-          (base.length
+          (platformStyled
+            ? `. Its element is styled by the platform (a WordPress class, or an inline style), ` +
+              `so this class is a hook rather than the thing holding the element up`
+            : base.length
             ? `. It shares its element with .${base[0]}, which is styled, so the element still ` +
               `renders - but whatever this class was added to change, it does not change.`
             : `, so the host theme decides how it renders`) +

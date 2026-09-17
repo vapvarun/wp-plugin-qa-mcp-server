@@ -611,6 +611,11 @@ export class WpPluginQaServer {
     systemicResults.push(checkWiringCompleteness(pluginPath));
     systemicResults.push(checkEnumConsistency(pluginPath));
     systemicResults.push(checkRestJsContract(pluginPath));
+    // A class or custom property the markup names and no stylesheet defines is
+    // resolved to nothing and carried on with, so it reaches customers as "the
+    // theme decided" - a button with no rule, a token pinned to its light
+    // literal in dark mode. Invisible to WPCS, PHPStan and every linter.
+    systemicResults.push(checkCssContract(pluginPath));
     systemicResults.push(checkEditorLayoutBias(pluginPath));
     systemicResults.push(checkUxGuidelines(pluginPath));
     systemicResults.push(checkPluginDevRules(pluginPath));
