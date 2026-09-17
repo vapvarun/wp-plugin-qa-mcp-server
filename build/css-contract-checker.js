@@ -210,6 +210,10 @@ function collectUsage(files, projectPath, prefix) {
         'dashicons',
         'components-button',
         'form-table',
+        // WooCommerce admin draws these.
+        'form-field',
+        'form-field-wide',
+        'woocommerce',
     ]);
     const varRe = new RegExp(`var\\(\\s*(--${prefix}[A-Za-z0-9-]+)`, 'g');
     const dynamic = /<\?php|\$\{|\{\{|\.\s*\$|\$\w+\s*\./;
