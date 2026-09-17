@@ -170,6 +170,22 @@ const allTools = [
             required: ['plugin_path'],
         },
     },
+    {
+        name: 'wppqa_check_css_contract',
+        description: 'Cross-layer flow check: every CSS class and custom property the MARKUP names must be defined by a stylesheet the plugin actually ships. Flags (a) custom properties used in var() that no stylesheet defines — these silently resolve to the hardcoded fallback the author typed, which is almost always the light-mode value, so the bug only shows in dark mode; (b) classes with no rule anywhere, where the host theme decides how the control renders; and (c) classes defined ONLY outside the plugin\'s universally loaded stylesheets, which is how a control ends up unstyled on a surface that does not enqueue that sheet. ' +
+            'This is invisible to WPCS, PHPStan, stylelint and Plugin Check — all of them analyze files in isolation and none crosses the markup<->stylesheet boundary. Nothing throws and nothing warns; CSS resolves a missing name to nothing and carries on, so these reach customers as "button is invisible in dark mode" support tickets. Proven class: wp-sell-services 1.7.1 shipped five of them (.wpss-btn--link at 1.18:1, --wpss-muted/--wpss-surface-hover at 1.13:1 white-on-white, .wpss-toast rendering 3100px off-screen, .wpss-dispute-detail__actions with 0px spacing). ' +
+            'Conservative: dynamically built class names are skipped rather than guessed. Optional per-plugin override at audit/css-contract.json { universal_sheets, ignore }.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                plugin_path: {
+                    type: 'string',
+                    description: 'Absolute path to the WordPress plugin directory',
+                },
+            },
+            required: ['plugin_path'],
+        },
+    },
     // ─── 8c. Readiness Scorecard ("the bar") ─────────────────────
     {
         name: 'wppqa_readiness',

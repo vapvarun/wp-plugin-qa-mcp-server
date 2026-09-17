@@ -19,6 +19,7 @@ import { checkBrowser } from './browser-runner.js';
 import { checkUx } from './ux-checker.js';
 import { checkTemplates } from './template-checker.js';
 import { checkTemplateContracts } from './template-contract-checker.js';
+import { checkCssContract } from './css-contract-checker.js';
 import { assessReadiness, formatReadiness, discoverPlugins, assessReadinessPortfolio, formatPortfolio } from './readiness-checklist.js';
 import { checkAccessibility } from './a11y-checker.js';
 import { evaluateAdmin } from './admin-evaluator.js';
@@ -110,6 +111,8 @@ export class WpPluginQaServer {
                         return this.handleCheckTemplates(toolArgs.plugin_path);
                     case 'wppqa_check_template_contract':
                         return this.handleCheckTemplateContract(toolArgs.plugin_path);
+                    case 'wppqa_check_css_contract':
+                        return this.handleCheckCssContract(toolArgs.plugin_path);
                     case 'wppqa_readiness':
                         return this.handleReadiness(toolArgs.plugin_path);
                     case 'wppqa_readiness_portfolio':
@@ -249,6 +252,12 @@ export class WpPluginQaServer {
         if (!pluginPath)
             return this.errorResult('plugin_path is required');
         const result = checkTemplateContracts(pluginPath);
+        return this.formatCheckerResult(result);
+    }
+    handleCheckCssContract(pluginPath) {
+        if (!pluginPath)
+            return this.errorResult('plugin_path is required');
+        const result = checkCssContract(pluginPath);
         return this.formatCheckerResult(result);
     }
     handleReadiness(pluginPath) {
