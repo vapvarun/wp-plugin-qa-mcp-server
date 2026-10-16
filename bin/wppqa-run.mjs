@@ -7,6 +7,7 @@
 //        [--artifacts <dir>] [--json <file>]
 import { writeFileSync } from 'node:fs';
 import { formatLedger, runChecks } from '../build/live/run.js';
+import { removeThemeSwitch } from '../build/live/browser.js';
 
 const argv = process.argv.slice(2);
 const arg = (k) => {
@@ -18,9 +19,20 @@ if (!plugin) {
   console.error('usage: wppqa-run.mjs --plugin <dir> [--wp <bin>] [--mode fast|full]');
   process.exit(2);
 }
+const wp = { bin: arg('wp') ?? 'wp', root: arg('wp-root') };
+// A stopped run skips runChecks' finally, so the temporary theme switch would stay on the site.
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    try {
+      removeThemeSwitch(wp);
+    } finally {
+      process.exit(130);
+    }
+  });
+}
 const ledger = await runChecks({
   pluginPath: plugin,
-  wp: { bin: arg('wp') ?? 'wp', root: arg('wp-root') },
+  wp,
   mode: arg('mode') === 'full' ? 'full' : 'fast',
   only: arg('only')?.split(',').filter(Boolean),
   freshSiteUrl: arg('fresh-site'),

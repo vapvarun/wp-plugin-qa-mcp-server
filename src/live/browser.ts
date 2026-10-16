@@ -93,7 +93,9 @@ export class Sessions {
     if (key.theme) await ctx.addCookies([{ name: 'wppqa_theme', value: key.theme.slug, domain: host, path: '/' }]);
     const page = await ctx.newPage();
     await this.login(page, key.persona);
-    if (key.dark) await setScheme(page, this.cfg.base_url, key.theme, 'dark');
+    // Light is enforced too: a theme that saves the mode to the account would otherwise carry dark into a light check.
+    if (key.theme?.dark) await setScheme(page, this.cfg.base_url, key.theme, key.dark ? 'dark' : 'light');
+    else if (key.dark) throw new Error(`theme "${key.theme?.slug}" has no dark toggle configured`);
     await page.close();
     return ctx;
   }
