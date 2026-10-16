@@ -1356,6 +1356,50 @@ function scanDbTables(phpFiles: string[], contents: Map<string, string>, pluginP
     }
   }
 
+  // Strongest ownership signal available: the plugin's own CREATE TABLE
+  // statements. A table this plugin creates is definitively its own, whatever
+  // its name looks like.
+  //
+  // This has to outrank the prefix heuristic below, because the prefix test
+  // cannot separate a Free/Pro pair that follows the usual convention: Free
+  // owns `jt_`, Pro owns `jt_pro_`, and `'jt_pro_reactions'.startsWith('jt_')`
+  // is true. So every Pro table read anywhere in Free — a demo seeder writing
+  // sample reactions, say — was being attributed to Free. (Jetonomy
+  // 2026-09-08: nine `jt_pro_*` tables landed in Free's inventory this way,
+  // inflating 22 owned tables to 31.) The reverse direction the prefix test
+  // was written for still works, since `jt_foo` does not start with `jt_pro_`.
+  //
+  // Matches `CREATE TABLE {$p}name`, `{$wpdb->prefix}name`, and the
+  // backtick-quoted variants.
+  // Only trust this signal when the schema was actually READABLE. A plugin
+  // that writes `CREATE TABLE {$conv}` names its tables through a variable, so
+  // no literal is there to capture; treating a partial read as the whole truth
+  // would drop every table we failed to parse. So count the CREATE TABLE sites
+  // as well as the names recovered, and use the set exclusively only when the
+  // two agree — i.e. every statement yielded a name.
+  const created = new Set<string>();
+  let createSites = 0;
+  for (const [cfile, c] of contents) {
+    // Schema evidence comes from the plugin's own runtime source only. A test
+    // fixture or a bundled library that creates a scratch table is not this
+    // plugin's schema, and counting those sites drags the ratio below the
+    // trust line for a plugin whose schema we actually read perfectly.
+    if (/(^|\/)(tests?|libs?|vendor|node_modules|build|dist)\//.test(relativePath(cfile, pluginPath))) continue;
+    createSites += (c.match(/CREATE\s+TABLE\s/gi) || []).length;
+    // The prefix must be a CLOSED interpolation `{$p}` / `{$wpdb->prefix}` or a
+    // quoted concatenation `$p . 'name'`. Leaving the brace optional let the
+    // engine backtrack into the variable itself — `CREATE TABLE $table_name`
+    // matched `$table_nam` + captured `e` as a table called "e".
+    const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(?:\{\$\w+(?:->\w+)?\}|\$\w+(?:->\w+)?\s*\.\s*['"])([a-z0-9_]{2,})/gi;
+    let cm: RegExpExecArray | null;
+    while ((cm = re.exec(c)) !== null) created.add(cm[1]);
+  }
+  // Tolerance, not equality: the site count also catches the phrase in comments
+  // and log strings ("Build CREATE TABLE SQL for all 22 tables"), so demanding a
+  // perfect match would reject a schema that was in fact read completely. A
+  // plugin naming its tables through variables lands far below this line.
+  const schemaFullyRead = createSites > 0 && created.size >= createSites * 0.8;
+
   // Drop concatenation fragments (a bare prefix like `lrn_` / `lrn_pro_` from
   // `$wpdb->prefix . 'lrn_pro_' . $name`) and, when the plugin's own prefix is
   // known, drop referenced-but-not-owned tables (e.g. a Pro plugin reading a
@@ -1363,6 +1407,10 @@ function scanDbTables(phpFiles: string[], contents: Map<string, string>, pluginP
   return tables.filter((t) => {
     const s = t.tableSuffix;
     if (!s || s === ownPrefix || /_$/.test(s)) return false; // bare-prefix fragment
+    // A plugin whose schema we fully parsed is trusted about what it owns.
+    // Otherwise fall through to the prefix heuristic rather than dropping the
+    // tables we simply could not read.
+    if (schemaFullyRead) return created.has(s);
     if (ownPrefix && !s.startsWith(ownPrefix)) return false;  // referenced, not owned
     return true;
   });

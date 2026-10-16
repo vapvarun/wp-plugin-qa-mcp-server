@@ -143,10 +143,12 @@ export function analyzeTemplateContracts(pluginPath: string): TemplateContractAn
     const code = stripPhpComments(blankNonPhp(content));
     const consumed = collectConsumedVars(code);
     const locallyAssigned = collectLocallyAssignedVars(code);
+    const guarded = collectGuardedVars(code);
 
     for (const [varName, firstLine] of consumed.entries()) {
       if (extraImplicit.has(varName)) continue;
       if (locallyAssigned.has(varName)) continue;
+      if (guarded.has(varName)) continue;
       if (meta.keys.has(varName)) continue;
 
       issues.push({
@@ -494,6 +496,28 @@ function collectLocallyAssignedVars(content: string): Set<string> {
     }
   }
   return locals;
+}
+
+/**
+ * Variables the template reads OPTIONALLY — guarded by `isset($v)`,
+ * `empty($v)`, or null-coalesce `$v ??`. A guard is the author explicitly
+ * declaring the key optional, so a missing loader key is by-design, not
+ * drift. These must be excluded from the required-contract check.
+ */
+function collectGuardedVars(content: string): Set<string> {
+  const guarded = new Set<string>();
+  const varInside = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+
+  // isset( … ) / empty( … ) — may hold several vars and array accesses.
+  for (const m of content.matchAll(/\b(?:isset|empty)\s*\(([^)]*)\)/g)) {
+    for (const v of m[1].matchAll(varInside)) guarded.add(v[1]);
+  }
+  // $v ?? …  and  $v ??= … (left operand is the optional read).
+  for (const m of content.matchAll(/\$([a-zA-Z_][a-zA-Z0-9_]*)\s*\?\?/g)) {
+    guarded.add(m[1]);
+  }
+
+  return guarded;
 }
 
 /**

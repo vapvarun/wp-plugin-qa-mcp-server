@@ -184,9 +184,78 @@ m.template_components = {
 // checklist over the portfolio standard, with a meets/below-bar verdict.
 m.readiness = assessReadiness(pluginPath, m);
 
+// ── Guard C — a rescan never shrinks a category below what it already held.
+//
+// Guards A and B protect a manifest this generator did not write. This one
+// protects the manifests it DID write, where neither of those fires: once a
+// plugin is on our schema, every later rescan is free to quietly emit less
+// than the last one.
+//
+// It can, because the scanner does not see everything. It has no capabilities
+// extractor at all, it reads CLI commands only in the shapes it knows, and a
+// plugin registering routes through a wrapper or a route-registry is largely
+// invisible to it. The back-compat block above maps whatever was found onto
+// the legacy top-level keys, so a blind spot arrives as an empty array rather
+// than an error — and an empty array overwrites a real inventory.
+//
+// Measured on Jetonomy 2026-09-08 (Guard B caught it there because that
+// manifest is still v2; a v3 plugin would have taken the damage silently):
+// wp_cli 16 → absent, capabilities 23 → absent, ajax 44 → 15, cron 7 → 2,
+// admin_pages 15 → 13, rest 86 → 82.
+//
+// So a category that had entries keeps them, the shrink is recorded in the
+// manifest and reported on stderr, and --force still writes the scan verbatim
+// for a plugin that genuinely lost surface.
+const shrunk = [];
+
+if (!has('--force') && existsSync(outFile)) {
+  let prev = null;
+  try {
+    prev = JSON.parse(readFileSync(outFile, 'utf8'));
+  } catch {
+    prev = null; // an unreadable previous manifest is no reason to refuse a fresh one
+  }
+
+  if (prev) {
+    // Size a category whatever its shape: a plain array, or {endpoints:[…]}.
+    const size = (v) =>
+      Array.isArray(v) ? v.length
+      : v && typeof v === 'object' && Array.isArray(v.endpoints) ? v.endpoints.length
+      : null;
+
+    for (const key of ['rest', 'ajax', 'admin_pages', 'tables', 'hooks_fired',
+                       'cron', 'blocks', 'shortcodes', 'wp_cli', 'capabilities']) {
+      const before = size(prev[key]);
+      const after = size(m[key]);
+      if (before === null || before === 0) continue;      // nothing to protect
+      if (after !== null && after >= before) continue;    // grew or held: fine
+
+      m[key] = prev[key];                                 // keep the better inventory
+      shrunk.push(`${key}: ${before} → ${after === null ? 'absent' : after}`);
+    }
+  }
+}
+
+if (shrunk.length) {
+  m.generated.preserved_categories = shrunk;
+  m.generated.preserved_note =
+    'Kept from the previous manifest: this scan found fewer entries than were already ' +
+    'recorded. Re-run with --force only if the plugin really did lose that surface.';
+}
+
 // outFile was resolved up top (default, or --out) so the write-guards above could
 // inspect the target before the scan cost was paid.
 mkdirSync(dirname(outFile), { recursive: true });
 const json = JSON.stringify(m, null, 2) + '\n';
 writeFileSync(outFile, json);
 process.stdout.write(`wrote ${(json.length / 1024).toFixed(0)}KB → ${outFile}\n`);
+
+if (shrunk.length) {
+  process.stderr.write(
+    `\n  ⚠  ${shrunk.length} categor${shrunk.length === 1 ? 'y' : 'ies'} would have shrunk and were preserved:\n` +
+    shrunk.map((s) => `       ${s}\n`).join('') +
+    `     The scanner found fewer entries than the existing manifest holds. That usually means\n` +
+    `     it cannot see this plugin's registration pattern, not that the surface was removed.\n` +
+    `     Verify against source before trusting a shrink; re-run with --force to write it anyway.\n`
+  );
+}

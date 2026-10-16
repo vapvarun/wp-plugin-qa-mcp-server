@@ -26,6 +26,7 @@ import { checkBrowser } from './browser-runner.js';
 import { checkUx } from './ux-checker.js';
 import { checkTemplates } from './template-checker.js';
 import { checkTemplateContracts } from './template-contract-checker.js';
+import { checkCssContract } from './css-contract-checker.js';
 import { assessReadiness, formatReadiness, discoverPlugins, assessReadinessPortfolio, formatPortfolio } from './readiness-checklist.js';
 import { checkAccessibility } from './a11y-checker.js';
 import { evaluateAdmin } from './admin-evaluator.js';
@@ -49,6 +50,7 @@ import { checkPluginDevRules } from './plugin-dev-rules-checker.js';
 import { checkQaCoverage } from './qa-coverage-checker.js';
 import { checkVisualRegression } from './visual-regression-checker.js';
 import { checkEnumConsistency } from './enum-consistency-checker.js';
+import { checkScale } from './perf-scale-checker.js';
 import { checkRestJsContract } from './rest-js-contract-checker.js';
 import { checkEditorLayoutBias } from './editor-layout-bias-checker.js';
 import {
@@ -139,6 +141,8 @@ export class WpPluginQaServer {
             return this.handleCheckTemplates(toolArgs.plugin_path as string);
           case 'wppqa_check_template_contract':
             return this.handleCheckTemplateContract(toolArgs.plugin_path as string);
+          case 'wppqa_check_css_contract':
+            return this.handleCheckCssContract(toolArgs.plugin_path as string);
           case 'wppqa_readiness':
             return this.handleReadiness(toolArgs.plugin_path as string);
           case 'wppqa_readiness_portfolio':
@@ -211,6 +215,8 @@ export class WpPluginQaServer {
             return this.handleCheckRestJsContract(toolArgs.plugin_path as string);
           case 'wppqa_check_editor_layout_bias':
             return this.handleCheckEditorLayoutBias(toolArgs.plugin_path as string);
+          case 'wppqa_check_scale':
+            return this.handleCheckScale(toolArgs.plugin_path as string);
 
           // 20. Full Audit (master tool)
           case 'wppqa_audit_plugin':
@@ -340,6 +346,12 @@ export class WpPluginQaServer {
   private handleCheckTemplateContract(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const result = checkTemplateContracts(pluginPath);
+    return this.formatCheckerResult(result);
+  }
+
+  private handleCheckCssContract(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkCssContract(pluginPath);
     return this.formatCheckerResult(result);
   }
 
@@ -501,6 +513,12 @@ export class WpPluginQaServer {
     return this.formatCheckerResult(result);
   }
 
+  private handleCheckScale(pluginPath: string): CallToolResult {
+    if (!pluginPath) return this.errorResult('plugin_path is required');
+    const result = checkScale(this.getCachedManifest(pluginPath));
+    return this.formatCheckerResult(result);
+  }
+
   private handleCheckEditorLayoutBias(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const result = checkEditorLayoutBias(pluginPath);
@@ -610,6 +628,11 @@ export class WpPluginQaServer {
     systemicResults.push(checkWiringCompleteness(pluginPath));
     systemicResults.push(checkEnumConsistency(pluginPath));
     systemicResults.push(checkRestJsContract(pluginPath));
+    // A class or custom property the markup names and no stylesheet defines is
+    // resolved to nothing and carried on with, so it reaches customers as "the
+    // theme decided" - a button with no rule, a token pinned to its light
+    // literal in dark mode. Invisible to WPCS, PHPStan and every linter.
+    systemicResults.push(checkCssContract(pluginPath));
     systemicResults.push(checkEditorLayoutBias(pluginPath));
     systemicResults.push(checkUxGuidelines(pluginPath));
     systemicResults.push(checkPluginDevRules(pluginPath));

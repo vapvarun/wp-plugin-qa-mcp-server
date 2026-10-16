@@ -3,3 +3,4 @@ build/
 playwright/generated/
 *.js.map
 .DS_Store
+php-ast/vendor/

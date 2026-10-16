@@ -320,7 +320,7 @@ export interface PluginManifest {
         totalLines: number;
     };
 }
-export type TestCategory = 'smoke' | 'functionality' | 'api' | 'database' | 'browser' | 'ux' | 'templates' | 'a11y' | 'admin-eval' | 'frontend-eval' | 'marketing' | 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep' | 'php-lint' | 'composer-audit' | 'i18n' | 'plugin-check' | 'bundle-size' | 'security-scan' | 'performance-scan' | 'pcp-deep' | 'wiring' | 'ux-guidelines' | 'plugin-dev-rules' | 'visual-regression' | 'enum-consistency' | 'rest-js-contract' | 'editor-layout-bias' | 'template-contract' | 'qa-coverage';
+export type TestCategory = 'smoke' | 'functionality' | 'api' | 'database' | 'browser' | 'ux' | 'templates' | 'a11y' | 'admin-eval' | 'frontend-eval' | 'marketing' | 'phpcs' | 'phpstan' | 'eslint' | 'stylelint' | 'phpcompat' | 'a11y-grep' | 'php-lint' | 'composer-audit' | 'i18n' | 'plugin-check' | 'bundle-size' | 'security-scan' | 'performance-scan' | 'pcp-deep' | 'wiring' | 'ux-guidelines' | 'plugin-dev-rules' | 'visual-regression' | 'enum-consistency' | 'rest-js-contract' | 'editor-layout-bias' | 'template-contract' | 'qa-coverage' | 'dup-function' | 'orphan' | 'rest-flow' | 'canonical-usage' | 'template-usage' | 'logic-flow' | 'performance-scale';
 export interface TestItem {
     id: string;
     category: TestCategory;
@@ -621,4 +621,34 @@ export interface CompetitiveReport {
         url: string;
     }[];
     generatedAt: string;
+}
+export type FlowNodeKind = 'route' | 'method' | 'function' | 'service' | 'template' | 'hook' | 'jsConsumer' | 'option' | 'table';
+export type FlowEdgeKind = 'calls' | 'returns' | 'reads' | 'loads' | 'fires' | 'consumes' | 'gatedBy' | 'registers';
+export interface FlowNode {
+    id: string;
+    kind: FlowNodeKind;
+    name: string;
+    file: string;
+    line: number;
+    repo: 'free' | 'pro';
+    meta?: Record<string, unknown>;
+}
+export interface FlowEdge {
+    from: string;
+    to: string;
+    kind: FlowEdgeKind;
+    file: string;
+    line: number;
+    meta?: Record<string, unknown>;
+}
+export interface FlowGraph {
+    nodes: Record<string, FlowNode>;
+    edges: FlowEdge[];
+    fingerprints: Record<string, string>;
+    repos: {
+        free: string;
+        pro?: string;
+    };
+    generated: string;
+    referencedNames?: string[];
 }

@@ -31,6 +31,7 @@ export declare class WpPluginQaServer {
     private handleCheckUx;
     private handleCheckTemplates;
     private handleCheckTemplateContract;
+    private handleCheckCssContract;
     private handleReadiness;
     private handleReadinessPortfolio;
     private handleCheckWiringCompleteness;
@@ -52,6 +53,7 @@ export declare class WpPluginQaServer {
     private handleCheckVisualRegression;
     private handleCheckEnumConsistency;
     private handleCheckRestJsContract;
+    private handleCheckScale;
     private handleCheckEditorLayoutBias;
     private handleCheckA11y;
     private handleEvaluateProduct;
