@@ -20,7 +20,12 @@ An MCP (Model Context Protocol) server that provides comprehensive quality assur
 | **Performance** | DB query estimation, asset loading, autoload options, N+1 patterns, caching usage, script placement |
 | **Competitive Analysis** | Market research across WordPress.org, CodeCanyon, and Google — feature comparison, gap analysis, roadmap |
 
-## 17 Tools
+## Tools
+
+### Live guard gate (start here)
+| Tool | Description | Requires Site? |
+|------|-------------|----------------|
+| `wppqa_run_checks` | Runs every check a plugin declares in `docs/qa/qa-config.json` (save round-trips, form/REST parity, fixture states, presentation on the theme x width matrix in light and dark, crawl, release refs) and holds the result against `audit/escapes.json`. Same engine from local CI: `bin/wppqa-run.mjs`. Contract: `~/.claude/skills/wp-plugin-release-qa/references/live-guard-gate.md` | Yes (release checks: No) |
 
 ### Discovery
 | Tool | Description |
