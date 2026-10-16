@@ -816,6 +816,26 @@ const allTools: Tool[] = [
     },
   },
 
+  // ─── Live checks from the plugin's qa-config (the gate every plugin shares) ──
+  {
+    name: 'wppqa_run_checks',
+    description:
+      'Run every live check a plugin configures in docs/qa/qa-config.json against its site, then hold the result against audit/escapes.json. Classes: roundtrip (untouched form save must not change the record; each checkbox flip must), parity (each entry-point form can set every REST write arg), states (seeded fixtures render as expected: $0 hides refund, every status listed, no second enable switch), presentation (computed-style rules across the theme x light/dark x width matrix, dark entered through the theme\'s own toggle), crawl (fresh-install walk: HTTP status, PHP errors, empty list shells, broken links), release (pot freshness, build fails loudly, no unguarded refs to zip-excluded files). Fast and full modes differ only in the theme/width matrix. Fails on any failing row or a guard id in escapes.json that no longer exists.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: { type: 'string', description: 'Absolute plugin directory (holds docs/qa/qa-config.json).' },
+        wp_cli: { type: 'string', description: 'WP-CLI executable or a site wrapper script. Default "wp".' },
+        wp_root: { type: 'string', description: 'WordPress root, passed as --path. Omit when the wrapper sets it.' },
+        mode: { type: 'string', enum: ['fast', 'full'], description: 'fast = qa-config matrix.fast (push); full = matrix.full (release).' },
+        only: { type: 'array', items: { type: 'string' }, description: 'Limit to check classes or guard ids, e.g. ["release", "states:refund-free"].' },
+        fresh_site_url: { type: 'string', description: 'Clean install of the release zip for the crawl. Defaults to the configured site.' },
+        artifacts_dir: { type: 'string', description: 'Where failing presentation screenshots are saved (never a site document root).' },
+      },
+      required: ['plugin_path'],
+    },
+  },
+
   // ─── Generic functional audit (plugin-agnostic, no per-plugin PHP) ──────
   {
     name: 'wppqa_audit',

@@ -9,6 +9,7 @@
  * degrade gracefully when site_url is missing.
  */
 
+import { formatLedger, runChecks } from './live/run.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -259,6 +260,9 @@ export class WpPluginQaServer {
               toolArgs.oracles_path as string | undefined,
             );
 
+          case 'wppqa_run_checks':
+            return this.handleRunChecks(toolArgs);
+
           default:
             return this.errorResult(`Unknown tool: ${name}`);
         }
@@ -273,6 +277,19 @@ export class WpPluginQaServer {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const manifest = this.getCachedManifest(pluginPath);
     return this.successResult(JSON.stringify(manifest, null, 2));
+  }
+
+  private async handleRunChecks(a: Record<string, unknown>): Promise<CallToolResult> {
+    if (!a.plugin_path) return this.errorResult('plugin_path is required');
+    const ledger = await runChecks({
+      pluginPath: a.plugin_path as string,
+      wp: { bin: (a.wp_cli as string) || 'wp', root: a.wp_root as string | undefined },
+      mode: a.mode === 'full' ? 'full' : 'fast',
+      only: a.only as string[] | undefined,
+      freshSiteUrl: a.fresh_site_url as string | undefined,
+      artifactsDir: a.artifacts_dir as string | undefined,
+    });
+    return this.successResult(formatLedger(ledger));
   }
 
   private handleCertify(wpRoot: string, cliNamespace: string, check?: string): CallToolResult {
