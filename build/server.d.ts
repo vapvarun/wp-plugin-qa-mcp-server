@@ -22,6 +22,7 @@ export declare class WpPluginQaServer {
     constructor();
     private setupToolHandlers;
     private handleScanPlugin;
+    private handleRunChecks;
     private handleCertify;
     private handleAudit;
     private handleCheckApi;

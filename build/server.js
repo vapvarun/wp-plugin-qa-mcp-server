@@ -8,6 +8,7 @@
  * Note: live-site checkers (api, db, browser, role-probe, visual-regression)
  * degrade gracefully when site_url is missing.
  */
+import { formatLedger, runChecks } from './live/run.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
@@ -170,6 +171,8 @@ export class WpPluginQaServer {
                         return this.handleCertify(toolArgs.wp_root, toolArgs.cli_namespace, toolArgs.check);
                     case 'wppqa_audit':
                         return this.handleAudit(toolArgs.wp_root, toolArgs.plugin_path, toolArgs.oracles_path);
+                    case 'wppqa_run_checks':
+                        return this.handleRunChecks(toolArgs);
                     default:
                         return this.errorResult(`Unknown tool: ${name}`);
                 }
@@ -185,6 +188,19 @@ export class WpPluginQaServer {
             return this.errorResult('plugin_path is required');
         const manifest = this.getCachedManifest(pluginPath);
         return this.successResult(JSON.stringify(manifest, null, 2));
+    }
+    async handleRunChecks(a) {
+        if (!a.plugin_path)
+            return this.errorResult('plugin_path is required');
+        const ledger = await runChecks({
+            pluginPath: a.plugin_path,
+            wp: { bin: a.wp_cli || 'wp', root: a.wp_root },
+            mode: a.mode === 'full' ? 'full' : 'fast',
+            only: a.only,
+            freshSiteUrl: a.fresh_site_url,
+            artifactsDir: a.artifacts_dir,
+        });
+        return this.successResult(formatLedger(ledger));
     }
     handleCertify(wpRoot, cliNamespace, check) {
         if (!wpRoot)
