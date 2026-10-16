@@ -151,4 +151,10 @@ test('ledger: a guard id that no config check defines is dangling', () => {
     ]);
     assert.deepEqual(d.map((e) => e.card), ['2']);
 });
+test('undersized or unpadded form controls fail; the shared 40px input passes', async () => {
+    const ok = 'style="height:40px;padding:0 12px;box-sizing:border-box"';
+    assert.ok(!(await rules(`<div class="p"><input ${ok}><select ${ok}><option>All</option></select><input type="checkbox"></div>`)).includes('control-size'));
+    assert.ok((await rules(`<div class="p"><select style="height:28px;padding:0 40px 0 0;box-sizing:border-box"><option>All</option></select></div>`)).includes('control-size'));
+    assert.ok((await rules(`<div class="p"><input style="height:40px;padding:0;box-sizing:border-box"></div>`)).includes('control-size'));
+});
 //# sourceMappingURL=live-rules.test.js.map

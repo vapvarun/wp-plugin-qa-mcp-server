@@ -76,11 +76,22 @@ export function pageRules(a) {
     const mergedItems = [];
     const merged = [];
     const bullets = [];
+    const controls = [];
+    // Text controls a site owner types or picks in. A one-off class instead of the shared input primitive
+    // rendered a 28px select with no inline padding beside a 40px search box; 34px is the dense-row floor.
+    const textControl = 'select, textarea, input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=color]):not([type=range]):not([type=file]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image])';
     for (const root of roots) {
         for (const el of Array.from(root.querySelectorAll('*'))) {
             if (!visible(el))
                 continue;
             const s = getComputedStyle(el);
+            if (el.matches(textControl)) {
+                const h = el.getBoundingClientRect().height;
+                if (h < 34)
+                    controls.push(`${name(el)} ${Math.round(h)}px tall`);
+                else if (parseFloat(s.paddingInlineStart || s.paddingLeft) < 4)
+                    controls.push(`${name(el)} has no inline padding`);
+            }
             const ownText = Array.from(el.childNodes).some((n) => n.nodeType === 3 && (n.textContent ?? '').trim().length > 1);
             if (ownText && !el.disabled) {
                 const fg = rgba(s.color);
@@ -164,6 +175,8 @@ export function pageRules(a) {
         fail('off-palette', `plugin surface tinted against the theme's neutral dark palette: ${top(offPalette)}`);
     if (mergedItems.length)
         fail('merged-items', `repeated items have no edge, shadow or surface of their own: ${top(mergedItems)}`);
+    if (controls.length)
+        fail('control-size', `form control below the 34px floor or with its text against the edge: ${top(controls)}`);
     if (bullets.length)
         fail('list-markers', `theme list markers on plugin lists: ${top(bullets)}`);
     if (a.kind === 'admin') {
