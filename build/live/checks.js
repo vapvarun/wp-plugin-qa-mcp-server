@@ -197,7 +197,8 @@ export async function crawl(c, p) {
         const scope = p.root ?? '#wpbody-content, main, body';
         // The WordPress toolbar is core chrome; its links are not the plugin's.
         const links = await page.$$eval(`${scope} a[href]`, (as) => [
-            ...new Set(as.filter((a) => !a.closest('#wpadminbar')).map((a) => a.href)),
+            // getAttribute, not .href: an <a> inside an SVG has an SVGAnimatedString href that serialises to undefined.
+            ...new Set(as.filter((a) => !a.closest('#wpadminbar')).map((a) => new URL(a.getAttribute('href') ?? '', document.baseURI).href)),
         ]);
         const origin = new URL(c.base).origin;
         for (const href of links.filter((h) => h.startsWith(origin) && !h.includes('logout') && !h.includes('action=delete') && !h.includes('_wpnonce')).slice(0, 60)) {
