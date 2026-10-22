@@ -1,16 +1,20 @@
 /**
  * WP Plugin QA MCP Server - Tool Definitions
  *
- * 27+ tools covering: discovery (plugin scanner), code quality (PHPCS,
- * PHPStan, ESLint, Stylelint, PHP Compat, a11y grep, PHP lint, Composer
- * audit, i18n, Plugin Check, bundle size, security/perf grep, PCP deep),
- * product evaluation (admin / frontend / marketing), live testing (REST,
- * DB, browser), market analysis, role-matrix probing, plan bootstrapping,
- * Basecamp learning, six systemic-misalignment checks (wiring, UX
- * guidelines, plugin-dev rules, visual regression, enum consistency,
- * REST/JS contract, editor layout bias, template contract), and the
+ * Covers RUNTIME behaviour and cross-layer STATIC checks that WPCS cannot do:
+ * discovery (plugin scanner), product evaluation (admin / frontend), live
+ * testing (REST, DB, browser, run_checks guards), role-matrix probing, plan
+ * bootstrapping, Basecamp learning, the systemic-misalignment checks (wiring,
+ * UX guidelines, plugin-dev rules, visual regression, enum consistency,
+ * REST/JS contract, template contract, CSS contract, editor layout bias,
+ * cross-reference data, qa coverage, scale), certification, and the
  * journey-by-journey customer-experience audit (init / coverage check /
  * briefing / consolidate matrix).
+ *
+ * Out of scope by ownership boundary: static code standards (php-lint,
+ * PHPCompatibility, WPCS/phpcs, PHPStan) live in the wpcs MCP; market/strategy
+ * analysis (gaps, category expectations, competitors) lives in the
+ * product-strategy skill.
  *
  * Tool list is the source of truth; keep it in sync with server.ts
  * switch-cases and the `wppqa_*` allow-listed names in user settings.
@@ -36,69 +40,6 @@ const allTools: Tool[] = [
     },
   },
 
-  // ─── 2. Code Quality: Setup ───────────────────────────────────
-  {
-    name: 'wppqa_setup_quality',
-    description:
-      'Scaffold all code quality config files in a plugin: .phpcs.xml.dist, phpstan.neon, .eslintrc.json, .eslintignore, .stylelintrc.json, .editorconfig, .pa11yci. Auto-detects text domain from plugin header, finds JS globals from wp_localize_script, adds phpstan to composer.json. Skips files that already exist.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        site_url: {
-          type: 'string',
-          description: 'Optional Local WP site URL for pa11y config (e.g., http://local-test.local)',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-
-  // ─── 3. Code Quality: Run All ─────────────────────────────────
-  {
-    name: 'wppqa_run_code_checks',
-    description:
-      'Run ALL 14 code quality checks: PHPCS (WordPress coding standards), PHPStan (static analysis), ESLint (JavaScript), Stylelint (CSS), PHP Compatibility (7.4-8.4), a11y grep (outline:none, empty links), PHP lint (syntax), Composer audit (vulnerabilities), i18n (translations), Plugin Check PCP (WordPress.org compliance), bundle size. Returns unified report. Skips tools not installed.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-
-  // ─── 4. Code Quality: Single Check ────────────────────────────
-  {
-    name: 'wppqa_check_code_quality',
-    description:
-      'Run a SINGLE code quality check by name. ' +
-      'Prefer the tool-backed checks (phpcs, phpstan, eslint, stylelint, phpcompat, plugin-check, php-lint, composer-audit, i18n) — those delegate to the underlying tool. ' +
-      'The grep-only scans (security-scan, performance-scan, pcp-deep, a11y-grep) are NOT authoritative: WPCS and Plugin Check cover the same patterns with data-flow awareness and produce far fewer false positives. ' +
-      'Use the grep scans only when phpcs / plugin-check are not installed.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        check: {
-          type: 'string',
-          enum: ['phpcs', 'phpstan', 'eslint', 'stylelint', 'phpcompat', 'a11y-grep', 'php-lint', 'composer-audit', 'i18n', 'plugin-check', 'bundle-size', 'security-scan', 'performance-scan', 'pcp-deep'],
-          description: 'Which quality check to run. Prefer phpcs / plugin-check over the grep-only variants (security-scan, performance-scan, pcp-deep, a11y-grep).',
-        },
-      },
-      required: ['plugin_path', 'check'],
-    },
-  },
-
   // ─── 5. Accessibility ─────────────────────────────────────────
   {
     name: 'wppqa_check_a11y',
@@ -116,11 +57,11 @@ const allTools: Tool[] = [
     },
   },
 
-  // ─── 6. Product Evaluation (merged admin+frontend+marketing) ──
+  // ─── 6. Product Evaluation (merged admin+frontend) ──
   {
     name: 'wppqa_evaluate_product',
     description:
-      'Evaluate plugin product quality across admin UI, frontend output, and marketing readiness. Combines admin settings evaluation, frontend rendering quality, and marketing fitness scoring into one tool.',
+      'Evaluate plugin product quality across admin UI and frontend output. Combines admin settings evaluation and frontend rendering quality into one tool. (Marketing/strategy readiness moved to the product-strategy skill.)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -130,7 +71,7 @@ const allTools: Tool[] = [
         },
         focus: {
           type: 'string',
-          enum: ['all', 'admin', 'frontend', 'marketing'],
+          enum: ['all', 'admin', 'frontend'],
           description: 'Which area to evaluate (default: all)',
           default: 'all',
         },
@@ -307,27 +248,6 @@ const allTools: Tool[] = [
         },
       },
       required: ['plugin_path', 'site_url'],
-    },
-  },
-
-  // ─── 12. Market Analysis (merged gaps + competitive) ──────────
-  {
-    name: 'wppqa_analyze_market',
-    description:
-      'Analyze plugin market position: feature gaps vs market expectations, maturity scoring, competitor comparison (WordPress.org, CodeCanyon), roadmap suggestions. Combines gap analysis and competitive research.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        search_keywords: {
-          type: 'string',
-          description: 'Optional keywords for competitor search',
-        },
-      },
-      required: ['plugin_path'],
     },
   },
 
@@ -526,41 +446,6 @@ const allTools: Tool[] = [
     },
   },
 
-  // ─── 19a-bis. Focused security + code quality audit ─────────────
-  // The pragmatic alternative to wppqa_audit_plugin (which now runs 14
-  // code-quality + 6 product + 7 systemic-misalignment checks and produces
-  // 600KB+ of mixed signal/noise). Only runs the high-signal subset for
-  // "is this safe + is the code good?" — drops every UX/templates/
-  // wiring-completeness/rest-js-contract heuristic that generates false
-  // positives on plugins with non-standard patterns (Interactivity API,
-  // settings via Models, etc.).
-  {
-    name: 'wppqa_security_quality_audit',
-    description:
-      "Focused security + code quality audit. Runs ONLY the high-signal trust-list checks: wppqa_check_plugin_dev_rules (security/UX rules from the wp-plugin-development skill: nonce-without-cap, $_POST iteration, alert/confirm ban, inline onclick, raw -1 inputs, tap targets, breakpoints) + plugin-check (WordPress.org PCP) + composer-audit (vendor vulnerabilities). Default returns ONLY high-severity findings (errors + high warnings); medium/low surfaced only when severity='all'. With strict=true, also runs phpcs and phpstan errors. Output ~10KB instead of wppqa_audit_plugin's 600KB+. Use this for PR gate / pre-release sanity / 'is this plugin safe to ship?'. Use wppqa_audit_plugin only for the broader review (UX, templates, wiring, enum-consistency, REST/JS contract, editor-layout, ux-guidelines, qa-coverage, market analysis) when you want the full systemic gate.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        plugin_path: {
-          type: 'string',
-          description: 'Absolute path to the WordPress plugin directory',
-        },
-        severity: {
-          type: 'string',
-          description:
-            "Severity floor for findings. 'high' (default) returns only high-severity warnings + errors. 'medium' adds medium-severity warnings (e.g., breakpoint discipline). 'all' adds low-severity (tap targets, style nits).",
-          enum: ['high', 'medium', 'all'],
-        },
-        strict: {
-          type: 'boolean',
-          description:
-            'When true, also runs phpcs and phpstan and counts their errors as failures. Default false because pre-commit hooks usually already enforce these locally.',
-        },
-      },
-      required: ['plugin_path'],
-    },
-  },
-
   // ─── 19b. Visual-regression check (live site — Playwright) ──────
   {
     name: 'wppqa_check_visual_regression',
@@ -666,7 +551,7 @@ const allTools: Tool[] = [
   {
     name: 'wppqa_audit_plugin',
     description:
-      'Complete plugin audit — the ONE command that runs everything: scan features, 14 code-quality checks, 6 product evaluators (UX, templates, a11y, admin, frontend, marketing), 7 systemic-misalignment checks (wiring-completeness, enum-consistency, rest-js-contract, editor-layout-bias, ux-guidelines, plugin-dev-rules, qa-coverage), gap analysis, and category-expectations analysis. With site_url, also runs API, DB, browser-stub, and visual-regression checks. Output formats: markdown (default), json, sarif, junit. Reports CODE QUALITY / PRODUCT QUALITY / SYSTEMIC MISALIGNMENT as three labelled sections so it is obvious which gate is failing.',
+      'Complete plugin audit — scan features, 5 product evaluators (UX, templates, a11y, admin, frontend), and 8 systemic-misalignment checks (wiring-completeness, enum-consistency, rest-js-contract, css-contract, editor-layout-bias, ux-guidelines, plugin-dev-rules, qa-coverage). With site_url, also runs API, DB, browser-stub, and visual-regression checks. Output formats: markdown (default), json, sarif, junit. Reports PRODUCT QUALITY / SYSTEMIC MISALIGNMENT as labelled sections so it is obvious which gate is failing. Static code standards (php-lint, PHPCompatibility, WPCS/phpcs, PHPStan) are covered by the wpcs MCP; market/strategy analysis by the product-strategy skill — neither is run here.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -870,16 +755,11 @@ const allTools: Tool[] = [
 // The deterministic behavioural gate (wppqa_certify) and the cross-layer wiring
 // / contract / live-site / role / journey checks are the functionality core.
 const EXCLUDED_NON_FUNCTIONAL = new Set<string>([
-  'wppqa_setup_quality',          // scaffolds phpcs/phpstan/eslint configs — hygiene
-  'wppqa_run_code_checks',        // runs the lint/static suite — hygiene
-  'wppqa_check_code_quality',     // phpcs/phpstan/eslint/Plugin Check — done separately
-  'wppqa_security_quality_audit', // security/quality grep — hygiene
   'wppqa_check_plugin_dev_rules', // dev-rule linting — hygiene
   'wppqa_check_editor_layout_bias', // code-pattern smell — hygiene
   'wppqa_check_ux',               // advisory UX grep — noise (real UX = browser/journey)
   'wppqa_check_ux_guidelines',    // advisory UX guideline grep — noise
   'wppqa_check_visual_regression', // pixel diffing — hygiene
-  'wppqa_analyze_market',         // competitive/market analysis — not QA
 ]);
 
 export const tools: Tool[] = allTools.filter((t) => !EXCLUDED_NON_FUNCTIONAL.has(t.name));
