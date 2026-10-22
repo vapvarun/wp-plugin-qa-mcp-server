@@ -1,12 +1,18 @@
 /**
  * WP Plugin QA MCP Server - Main Server
- * 31 tools across 5 groups: discovery (scan), code-quality (delegates to phpcs/
- * phpstan/eslint/etc.), product-eval (admin/frontend/marketing/ux/templates/a11y),
- * systemic-misalignment (wiring, enum, rest-js contract, editor-layout-bias,
- * ux-guidelines, plugin-dev-rules, qa-coverage, visual-regression), and
- * audit-workflows (one-shot audit_plugin + parallel journey-audit subsystem).
+ * 28 tools exposed (33 defined; 5 hidden by EXCLUDED_NON_FUNCTIONAL in tools.ts).
+ * Groups: discovery (scan), product-eval (admin/frontend/ux/templates/a11y),
+ * systemic-misalignment (wiring, enum, rest-js contract, css contract,
+ * editor-layout-bias, ux-guidelines, plugin-dev-rules, qa-coverage,
+ * visual-regression, cross-reference-data, scale), live-site (api, db, browser,
+ * role-probe, run_checks guards), and audit-workflows (one-shot audit_plugin +
+ * parallel journey-audit subsystem + certify + readiness).
+ * Ownership boundary: static code standards (php-lint, PHPCompatibility,
+ * WPCS/phpcs, PHPStan) belong to the wpcs MCP; market/strategy analysis belongs
+ * to the product-strategy skill. Neither is run here.
  * Note: live-site checkers (api, db, browser, role-probe, visual-regression)
- * degrade gracefully when site_url is missing.
+ * degrade gracefully when site_url is missing. Several modules shell out via
+ * execFileSync/spawnSync (php lint, Playwright, composer, WP-CLI).
  */
 export declare class WpPluginQaServer {
     private server;
@@ -43,13 +49,6 @@ export declare class WpPluginQaServer {
      * uncovered_total regressed (or any uncovered with strict=true).
      */
     private handleCheckQaCoverage;
-    /**
-     * Focused security + code quality audit. Composes the high-signal trust-list
-     * checks (plugin_dev_rules + plugin-check + composer-audit) and optionally
-     * phpcs + phpstan. Filters out noisy heuristics like rest_js_contract and
-     * wiring_completeness. Returns a concise report keyed on severity.
-     */
-    private handleSecurityQualityAudit;
     private handleCheckVisualRegression;
     private handleCheckEnumConsistency;
     private handleCheckRestJsContract;
@@ -57,15 +56,11 @@ export declare class WpPluginQaServer {
     private handleCheckEditorLayoutBias;
     private handleCheckA11y;
     private handleEvaluateProduct;
-    private handleAnalyzeMarket;
     private handleAuditPlugin;
     private handleProbeRoles;
     private handleCrossReferenceData;
     private handleBootstrapPlan;
     private handleLearnFromBasecamp;
-    private handleSetupQuality;
-    private handleRunCodeChecks;
-    private handleCheckCodeQuality;
     private formatCheckerResult;
     private successResult;
     private errorResult;

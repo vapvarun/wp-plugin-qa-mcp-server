@@ -3,13 +3,14 @@
 /**
  * WP Plugin QA MCP Server - Entry Point
  * Comprehensive WordPress plugin QA automation.
- * Note: No shell commands or child processes used.
+ * Note: several checkers shell out via execFileSync/spawnSync (php lint,
+ * Playwright, composer, WP-CLI) — this is not a pure in-process server.
  */
 
 import { WpPluginQaServer } from './server.js';
 
 async function main() {
-  console.error('Starting WP Plugin QA MCP Server v2.1.0...');
+  console.error('Starting WP Plugin QA MCP Server v3.2.0...');
   const server = new WpPluginQaServer();
   await server.run();
 }
