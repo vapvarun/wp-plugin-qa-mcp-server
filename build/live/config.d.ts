@@ -1,4 +1,4 @@
-export type CheckClass = 'roundtrip' | 'parity' | 'states' | 'presentation' | 'crawl' | 'release';
+export type CheckClass = 'roundtrip' | 'parity' | 'states' | 'presentation' | 'crawl' | 'release' | 'static';
 export declare const CHECK_CLASSES: CheckClass[];
 export interface Persona {
     /** Value for the site's autologin param (user id or login). */
@@ -138,6 +138,11 @@ export interface QaConfig {
         presentation?: Surface[];
         crawl?: CrawlPage[];
         release?: ReleaseConfig;
+        /** Shell guards the plugin owns (a WP-CLI test script each); replayed in the plugin directory. */
+        static?: {
+            id: string;
+            run: string;
+        }[];
     };
 }
 /** A failure already filed as an open card: reported, not counted, until the card's fix lands. */

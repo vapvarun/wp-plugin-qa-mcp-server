@@ -5,7 +5,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-export const CHECK_CLASSES = ['roundtrip', 'parity', 'states', 'presentation', 'crawl', 'release'];
+export const CHECK_CLASSES = ['roundtrip', 'parity', 'states', 'presentation', 'crawl', 'release', 'static'];
 export function loadKnown(pluginPath) {
     const p = join(pluginPath, 'audit', 'known-failures.json');
     if (!existsSync(p))
@@ -62,6 +62,8 @@ export function guardIds(cfg) {
     }
     for (const c of cfg.checks.crawl ?? [])
         ids.add(`crawl:${c.url}`);
+    for (const c of cfg.checks.static ?? [])
+        ids.add(`static:${c.id}`);
     if (cfg.checks.release)
         for (const r of ['pot', 'build', 'refs'])
             ids.add(`release:${r}`);

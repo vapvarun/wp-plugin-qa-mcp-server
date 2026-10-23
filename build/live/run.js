@@ -9,6 +9,7 @@ import { CHECK_CLASSES, danglingGuards, loadConfig, loadEscapes, loadKnown } fro
 import { installThemeSwitch, launch, removeThemeSwitch, Sessions } from './browser.js';
 import { crawl, parity, presentation, roundtrip, states } from './checks.js';
 import { checkBuild, checkPot, checkRefs } from './release.js';
+import { staticGuard } from './static.js';
 export async function runChecks(o) {
     const cfg = loadConfig(o.pluginPath);
     const escapes = loadEscapes(o.pluginPath);
@@ -29,7 +30,10 @@ export async function runChecks(o) {
     if (r && want('release')) {
         rows.push(checkPot(o.pluginPath, r, cfg.slug), checkBuild(o.pluginPath, r), checkRefs(o.pluginPath, r));
     }
-    const live = CHECK_CLASSES.filter((c) => c !== 'release').some((c) => want(c) && cfg.checks[c]?.length);
+    for (const g of cfg.checks.static ?? [])
+        if (want('static', g.id))
+            rows.push(staticGuard(o.pluginPath, o.wp, g));
+    const live = CHECK_CLASSES.filter((c) => c !== 'release' && c !== 'static').some((c) => want(c) && cfg.checks[c]?.length);
     if (live) {
         if (o.artifactsDir)
             mkdirSync(o.artifactsDir, { recursive: true });
