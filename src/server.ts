@@ -1,12 +1,18 @@
 /**
  * WP Plugin QA MCP Server - Main Server
- * 31 tools across 5 groups: discovery (scan), code-quality (delegates to phpcs/
- * phpstan/eslint/etc.), product-eval (admin/frontend/marketing/ux/templates/a11y),
- * systemic-misalignment (wiring, enum, rest-js contract, editor-layout-bias,
- * ux-guidelines, plugin-dev-rules, qa-coverage, visual-regression), and
- * audit-workflows (one-shot audit_plugin + parallel journey-audit subsystem).
+ * 28 tools exposed (33 defined; 5 hidden by EXCLUDED_NON_FUNCTIONAL in tools.ts).
+ * Groups: discovery (scan), product-eval (admin/frontend/ux/templates/a11y),
+ * systemic-misalignment (wiring, enum, rest-js contract, css contract,
+ * editor-layout-bias, ux-guidelines, plugin-dev-rules, qa-coverage,
+ * visual-regression, cross-reference-data, scale), live-site (api, db, browser,
+ * role-probe, run_checks guards), and audit-workflows (one-shot audit_plugin +
+ * parallel journey-audit subsystem + certify + readiness).
+ * Ownership boundary: static code standards (php-lint, PHPCompatibility,
+ * WPCS/phpcs, PHPStan) belong to the wpcs MCP; market/strategy analysis belongs
+ * to the product-strategy skill. Neither is run here.
  * Note: live-site checkers (api, db, browser, role-probe, visual-regression)
- * degrade gracefully when site_url is missing.
+ * degrade gracefully when site_url is missing. Several modules shell out via
+ * execFileSync/spawnSync (php lint, Playwright, composer, WP-CLI).
  */
 
 import { formatLedger, runChecks } from './live/run.js';
@@ -31,13 +37,7 @@ import { assessReadiness, formatReadiness, discoverPlugins, assessReadinessPortf
 import { checkAccessibility } from './a11y-checker.js';
 import { evaluateAdmin } from './admin-evaluator.js';
 import { evaluateFrontend } from './frontend-evaluator.js';
-import { evaluateMarketing } from './marketing-evaluator.js';
-import { buildReport, exportSarif, exportJunit, buildAuditReport, formatAuditReport } from './report-builder.js';
-import { analyzeCompetitors, formatCompetitiveReport } from './competitive-analyzer.js';
-import { analyzeGaps, formatGapAnalysis } from './gap-analyzer.js';
-import { analyzeExpectations, formatCategoryAnalysis } from './category-expectations.js';
-import { scaffoldQualityConfigs } from './quality-scaffolder.js';
-import { runAllCodeChecks, runSingleCheck } from './code-quality-checker.js';
+import { buildReport, exportSarif, exportJunit } from './report-builder.js';
 import { runCertify, formatCertify, runEngine, formatEngine } from './cert-runner.js';
 import { probeRoleMatrix } from './role-matrix-prober.js';
 import type { RoleProfile } from './role-matrix-prober.js';
@@ -88,7 +88,7 @@ export class WpPluginQaServer {
     this.server = new Server(
       {
         name: 'wp-plugin-qa-mcp-server',
-        version: '3.1.0',
+        version: '3.2.0',
       },
       {
         capabilities: {
@@ -117,14 +117,6 @@ export class WpPluginQaServer {
           // 1. Discovery
           case 'wppqa_scan_plugin':
             return this.handleScanPlugin(toolArgs.plugin_path as string);
-
-          // 2-4. Code Quality
-          case 'wppqa_setup_quality':
-            return this.handleSetupQuality(toolArgs.plugin_path as string, toolArgs.site_url as string | undefined);
-          case 'wppqa_run_code_checks':
-            return this.handleRunCodeChecks(toolArgs.plugin_path as string);
-          case 'wppqa_check_code_quality':
-            return this.handleCheckCodeQuality(toolArgs.plugin_path as string, toolArgs.check as string);
 
           // 5. Accessibility
           case 'wppqa_check_a11y':
@@ -156,10 +148,6 @@ export class WpPluginQaServer {
           case 'wppqa_check_browser':
             return this.handleCheckBrowser(toolArgs.plugin_path as string, toolArgs.site_url as string, toolArgs.mode as string | undefined);
 
-          // 12. Market Analysis (merged gaps + competitive)
-          case 'wppqa_analyze_market':
-            return await this.handleAnalyzeMarket(toolArgs.plugin_path as string, toolArgs.search_keywords as string | undefined);
-
           // 13. Role-matrix prober
           case 'wppqa_probe_roles':
             return await this.handleProbeRoles(
@@ -190,12 +178,6 @@ export class WpPluginQaServer {
             return this.handleCheckUxGuidelines(toolArgs.plugin_path as string);
           case 'wppqa_check_plugin_dev_rules':
             return this.handleCheckPluginDevRules(toolArgs.plugin_path as string);
-          case 'wppqa_security_quality_audit':
-            return this.handleSecurityQualityAudit(
-              toolArgs.plugin_path as string,
-              toolArgs.severity as string | undefined,
-              toolArgs.strict as boolean | undefined,
-            );
           case 'wppqa_check_qa_coverage':
             return this.handleCheckQaCoverage(
               toolArgs.plugin_path as string,
@@ -401,90 +383,6 @@ export class WpPluginQaServer {
     return this.formatCheckerResult(result);
   }
 
-  /**
-   * Focused security + code quality audit. Composes the high-signal trust-list
-   * checks (plugin_dev_rules + plugin-check + composer-audit) and optionally
-   * phpcs + phpstan. Filters out noisy heuristics like rest_js_contract and
-   * wiring_completeness. Returns a concise report keyed on severity.
-   */
-  private handleSecurityQualityAudit(
-    pluginPath: string,
-    severity?: string,
-    strict?: boolean,
-  ): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-
-    const sevFloor = severity === 'all' ? 'low' : severity === 'medium' ? 'medium' : 'high';
-    const sevRank: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
-    const minRank = sevRank[sevFloor] ?? 3;
-
-    // Run the trust-list subset.
-    const results: CheckerResult[] = [];
-    results.push(checkPluginDevRules(pluginPath));
-    results.push(runSingleCheck(pluginPath, 'plugin-check'));
-    results.push(runSingleCheck(pluginPath, 'composer-audit'));
-    if (strict) {
-      results.push(runSingleCheck(pluginPath, 'phpcs'));
-      results.push(runSingleCheck(pluginPath, 'phpstan'));
-    }
-
-    // Apply severity floor and tally.
-    let totalErrors = 0;
-    let totalWarnings = 0;
-    const filtered = results.map((r) => {
-      const issues = r.issues.filter((i) => {
-        // Always keep errors regardless of severity floor — they're actionable.
-        if (i.type === 'error') {
-          totalErrors++;
-          return true;
-        }
-        const rank = sevRank[i.severity] ?? 0;
-        if (rank >= minRank) {
-          if (i.type === 'warning') totalWarnings++;
-          return true;
-        }
-        return false;
-      });
-      return { ...r, issues };
-    });
-
-    // Render concise output.
-    let output = `SECURITY + CODE QUALITY AUDIT\n${'='.repeat(60)}\n\n`;
-    output += `Severity floor: ${sevFloor}${strict ? ' (strict: phpcs + phpstan included)' : ''}\n`;
-    output += `Total: ${totalErrors} error${totalErrors === 1 ? '' : 's'}, ${totalWarnings} warning${totalWarnings === 1 ? '' : 's'} above floor\n\n`;
-
-    for (const r of filtered) {
-      const errCount = r.issues.filter((i) => i.type === 'error').length;
-      const warnCount = r.issues.filter((i) => i.type === 'warning').length;
-      const status = errCount === 0 && warnCount === 0 ? 'PASS' : errCount > 0 ? 'FAIL' : 'WARN';
-      output += `[${status}] ${r.category.toUpperCase().padEnd(20)} ${errCount} errors, ${warnCount} warnings\n`;
-    }
-
-    output += '\n';
-
-    for (const r of filtered) {
-      if (r.issues.length === 0) continue;
-      output += `${r.category.toUpperCase()} (${r.issues.length})\n${'-'.repeat(40)}\n`;
-      for (const issue of r.issues) {
-        output += `[${issue.type}/${issue.severity}] ${issue.title}\n`;
-        output += `  ${issue.message}\n`;
-        if (issue.file) output += `  File: ${issue.file}${issue.line > 0 ? ':' + issue.line : ''}\n`;
-        if (issue.fix) output += `  Fix: ${issue.fix}\n`;
-        output += '\n';
-      }
-    }
-
-    // Verdict line — release-readiness check.
-    const verdict = totalErrors === 0
-      ? totalWarnings === 0
-        ? '✅ CLEAN — no findings above severity floor'
-        : `⚠ ${totalWarnings} warning${totalWarnings === 1 ? '' : 's'} above floor — review before shipping`
-      : `❌ ${totalErrors} error${totalErrors === 1 ? '' : 's'} — release blocked`;
-    output += `${'='.repeat(60)}\n${verdict}\n`;
-
-    return this.successResult(output);
-  }
-
   private handleCheckVisualRegression(
     pluginPath: string,
     siteUrl?: string,
@@ -527,21 +425,10 @@ export class WpPluginQaServer {
 
   private handleCheckA11y(pluginPath: string): CallToolResult {
     if (!pluginPath) return this.errorResult('plugin_path is required');
-    // Run both static a11y analysis AND grep-based checks
-    const staticResult = checkAccessibility(pluginPath);
-    const grepResult = runSingleCheck(pluginPath, 'a11y-grep');
-
-    // Merge issues from both
-    const mergedIssues = [...staticResult.issues, ...grepResult.issues];
-    const mergedResult: CheckerResult = {
-      category: 'a11y',
-      issues: mergedIssues,
-      passed: staticResult.passed + grepResult.passed,
-      failed: staticResult.failed + grepResult.failed,
-      skipped: staticResult.skipped + grepResult.skipped,
-      duration: staticResult.duration + grepResult.duration,
-    };
-    return this.formatCheckerResult(mergedResult);
+    // Static WCAG analysis only. The former "a11y-grep" merge lived in
+    // code-quality-checker (now owned by the wpcs MCP) and was removed.
+    const result = checkAccessibility(pluginPath);
+    return this.formatCheckerResult(result);
   }
 
   private handleEvaluateProduct(pluginPath: string, focus?: string): CallToolResult {
@@ -552,7 +439,7 @@ export class WpPluginQaServer {
 
     if (area === 'all' || area === 'admin') results.push(evaluateAdmin(manifest, pluginPath));
     if (area === 'all' || area === 'frontend') results.push(evaluateFrontend(manifest, pluginPath));
-    if (area === 'all' || area === 'marketing') results.push(evaluateMarketing(manifest, pluginPath));
+    // Marketing/strategy evaluation moved to the product-strategy skill.
 
     // Merge all results
     const allIssues = results.flatMap(r => r.issues);
@@ -577,48 +464,31 @@ export class WpPluginQaServer {
     return this.successResult(msg);
   }
 
-  private async handleAnalyzeMarket(pluginPath: string, searchKeywords?: string): Promise<CallToolResult> {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    const manifest = this.getCachedManifest(pluginPath);
-
-    // Gap analysis
-    const gapResult = analyzeGaps(manifest);
-    let output = formatGapAnalysis(gapResult);
-
-    // Category expectations
-    const categoryResult = analyzeExpectations(manifest);
-    output += '\n\n' + formatCategoryAnalysis(categoryResult);
-
-    // Competitive analysis
-    try {
-      const report = await analyzeCompetitors(pluginPath, searchKeywords, 10);
-      output += '\n\n' + formatCompetitiveReport(report);
-    } catch {
-      output += '\n\nCompetitive analysis: skipped (network error or no results)';
-    }
-
-    return this.successResult(output);
-  }
-
   private async handleAuditPlugin(pluginPath: string, siteUrl?: string, format?: string): Promise<CallToolResult> {
     if (!pluginPath) return this.errorResult('plugin_path is required');
 
     // Step 1: Scan plugin
     const manifest = this.getCachedManifest(pluginPath);
 
-    // Step 2: Code quality checks (14 checks)
-    const codeResults = runAllCodeChecks(pluginPath);
+    // Ownership boundary: static code standards (php-lint, PHPCompatibility,
+    // WPCS/phpcs, PHPStan) are owned by the wpcs MCP, and market/strategy
+    // analysis (gaps, category expectations, competitors) by the
+    // product-strategy skill. Neither is run here — this audit covers runtime
+    // product quality, cross-layer systemic misalignment, and live-site behaviour.
+    const STANDARDS_NOTE =
+      'Standards (php-lint, PHPCompatibility, WPCS/phpcs, PHPStan) are covered by the wpcs MCP. ' +
+      'Market/strategy analysis (gaps, category expectations, competitors) is covered by the product-strategy skill. ' +
+      'Neither is run by this audit.';
 
-    // Step 3: Product evaluation checks
+    // Step 2: Product evaluation checks
     const productResults: CheckerResult[] = [];
     productResults.push(checkUx(pluginPath));
     productResults.push(checkTemplates(pluginPath));
     productResults.push(checkAccessibility(pluginPath));
     productResults.push(evaluateAdmin(manifest, pluginPath));
     productResults.push(evaluateFrontend(manifest, pluginPath));
-    productResults.push(evaluateMarketing(manifest, pluginPath));
 
-    // Step 3.5: Systemic misalignment checks
+    // Step 3: Systemic misalignment checks
     // These are the cross-layer gates that catch the bugs WPCS/PHPStan miss —
     // half-wired settings, enum drift between PHP/JS, REST envelope mismatches,
     // editor sidebar cram, missing focus rings, qa coverage gaps. Each one
@@ -646,60 +516,35 @@ export class WpPluginQaServer {
       systemicResults.push(checkVisualRegression({ pluginPath, siteUrl }));
     }
 
-    // Step 5: Gap analysis
-    const gapResult = analyzeGaps(manifest);
-    const categoryResult = analyzeExpectations(manifest);
-
-    // Step 6: Build unified report
-    const allResults = [...codeResults, ...productResults, ...systemicResults];
+    // Step 5: Build unified report over product + systemic (+ live) results
+    const allResults = [...productResults, ...systemicResults];
     const qaReport = buildReport(
       manifest.header.name || manifest.header.slug,
       manifest.header.version,
       allResults,
     );
-    const auditReport = buildAuditReport(gapResult, qaReport);
 
-    // Step 7: Format output
+    // Step 6: Format output
     if (format === 'json') {
-      // Compact by default: the full per-issue `code` snippets + double-emitted
-      // codeResults made this ~600KB and blew caller token limits. Emit counts +
-      // top-N for the code checks; keep the newer product/systemic summaries.
-      const slimChecks = codeResults.map((r: any) => ({
-        category: r.category, passed: r.passed, failed: r.failed, skipped: r.skipped,
-        errors: r.issues.filter((i: any) => i.type === 'error').length,
-        warnings: r.issues.filter((i: any) => i.type === 'warning').length,
-        topIssues: r.issues.filter((i: any) => i.type === 'error').slice(0, 5)
-          .map(({ id, severity, title, file, line, fix }: any) => ({ id, severity, title, file, line, fix })),
-      }));
-      const cq: any = auditReport.codeQuality;
-      const slimAudit: any = {
-        ...auditReport,
-        codeQuality: cq && { grade: cq.grade, score: cq.score, summary: cq.summary, categories: cq.categories, bugs: (cq.bugs || []).slice(0, 20) },
-        gapAnalysis: ((auditReport as any).gapAnalysis || []).slice(0, 30),
-      };
       return this.successResult(JSON.stringify({
-        audit: slimAudit,
-        customerExpectations: categoryResult,
-        codeQuality: slimChecks,
+        standardsNote: STANDARDS_NOTE,
+        grade: qaReport.grade,
+        score: qaReport.score,
+        summary: qaReport.summary,
         productQuality: productResults,
         systemicMisalignment: systemicResults,
       }, null, 2));
     }
     if (format === 'sarif' || format === 'junit') {
-      // Build a QaReport over every code-quality issue, then export it
-      // in the requested format. SARIF targets GitHub Code Scanning and
-      // VS Code's SARIF viewer; JUnit targets CI consumption.
-      const qaReport = buildReport(
-        manifest.header.name,
-        manifest.header.version,
-        codeResults,
-      );
+      // Export the product + systemic QaReport. SARIF targets GitHub Code
+      // Scanning and VS Code's SARIF viewer; JUnit targets CI consumption.
       return this.successResult(
         format === 'sarif' ? exportSarif(qaReport) : exportJunit(qaReport),
       );
     }
 
     let output = `FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
+    output += `${STANDARDS_NOTE}\n\n`;
 
     const renderGroup = (title: string, results: CheckerResult[]): string => {
       let s = `${title} (${results.length} checks)\n${'-'.repeat(40)}\n`;
@@ -716,13 +561,8 @@ export class WpPluginQaServer {
       return s;
     };
 
-    output += renderGroup('CODE QUALITY', codeResults);
     output += renderGroup('PRODUCT QUALITY', productResults);
     output += renderGroup('SYSTEMIC MISALIGNMENT', systemicResults);
-
-    // Audit report + category analysis
-    output += formatAuditReport(auditReport);
-    output += '\n\n' + formatCategoryAnalysis(categoryResult);
 
     return this.successResult(output);
   }
@@ -792,137 +632,6 @@ export class WpPluginQaServer {
       const msg = err instanceof Error ? err.message : String(err);
       return this.errorResult(`wppqa_learn_from_basecamp: ${msg}`);
     }
-  }
-
-  // ─── Code Quality Handlers ──────────────────────────────────
-
-  private handleSetupQuality(pluginPath: string, siteUrl?: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-
-    const result = scaffoldQualityConfigs(pluginPath, siteUrl);
-
-    let msg = `QUALITY CONFIG SETUP\n${'='.repeat(50)}\n\n`;
-
-    if (result.created.length > 0) {
-      msg += `CREATED (${result.created.length}):\n`;
-      for (const f of result.created) msg += `  + ${f}\n`;
-      msg += '\n';
-    }
-
-    if (result.updated.length > 0) {
-      msg += `UPDATED (${result.updated.length}):\n`;
-      for (const f of result.updated) msg += `  ~ ${f}\n`;
-      msg += '\n';
-    }
-
-    if (result.skipped.length > 0) {
-      msg += `SKIPPED (already exist) (${result.skipped.length}):\n`;
-      for (const f of result.skipped) msg += `  - ${f}\n`;
-      msg += '\n';
-    }
-
-    if (result.errors.length > 0) {
-      msg += `ERRORS (${result.errors.length}):\n`;
-      for (const f of result.errors) msg += `  ! ${f}\n`;
-      msg += '\n';
-    }
-
-    msg += `\nNext steps:\n`;
-    msg += `  1. composer install     (install phpstan)\n`;
-    msg += `  2. npm install --include=dev  (install stylelint if in package.json)\n`;
-    msg += `  3. Run: wppqa_run_code_checks to see all issues\n`;
-
-    return this.successResult(msg);
-  }
-
-  private handleRunCodeChecks(pluginPath: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-
-    const results = runAllCodeChecks(pluginPath);
-
-    let msg = `CODE QUALITY REPORT\n${'='.repeat(50)}\n\n`;
-    msg += `SUMMARY\n${'-'.repeat(40)}\n`;
-
-    let totalErrors = 0;
-    let totalWarnings = 0;
-
-    for (const r of results) {
-      const errors = r.issues.filter(i => i.type === 'error').length;
-      const warnings = r.issues.filter(i => i.type === 'warning').length;
-      const infos = r.issues.filter(i => i.type === 'info').length;
-      totalErrors += errors;
-      totalWarnings += warnings;
-
-      const status = r.skipped > 0 && r.failed === 0 && infos > 0
-        ? 'SKIPPED'
-        : errors === 0 ? 'PASS' : 'FAIL';
-
-      msg += `  ${r.category.toUpperCase().padEnd(12)} ${status.padEnd(8)} ${errors} errors, ${warnings} warnings`;
-      if (infos > 0 && r.skipped > 0) msg += ` (${r.issues[0]?.message || ''})`;
-      msg += ` [${r.duration}ms]\n`;
-    }
-
-    msg += `${'-'.repeat(40)}\n`;
-    msg += `  TOTAL: ${totalErrors} errors, ${totalWarnings} warnings\n\n`;
-
-    // Detailed issues per tool
-    for (const r of results) {
-      const issues = r.issues.filter(i => i.type !== 'info');
-      if (issues.length === 0) continue;
-
-      msg += `\n${r.category.toUpperCase()} DETAILS (${issues.length} issues)\n${'-'.repeat(40)}\n`;
-      for (const issue of issues.slice(0, 20)) {
-        msg += `  [${issue.type}] ${issue.file}:${issue.line} — ${issue.title}\n`;
-        if (issue.code) msg += `    Code: ${issue.code}\n`;
-      }
-      if (issues.length > 20) {
-        msg += `  ... and ${issues.length - 20} more\n`;
-      }
-    }
-
-    msg += `\n${'='.repeat(50)}\n`;
-
-    return {
-      content: [{ type: 'text', text: msg } as TextContent],
-      isError: totalErrors > 0,
-    };
-  }
-
-  private handleCheckCodeQuality(pluginPath: string, check: string): CallToolResult {
-    if (!pluginPath) return this.errorResult('plugin_path is required');
-    if (!check) {
-      return this.errorResult(
-        'check is required (one of: phpcs, phpstan, eslint, stylelint, phpcompat, a11y-grep, php-lint, composer-audit, i18n, plugin-check, bundle-size, security-scan, performance-scan, pcp-deep)',
-      );
-    }
-
-    // Keep this list in lockstep with CodeCheckType in code-quality-checker.ts
-    // and the `check` enum in tools.ts. The previous version was stale and
-    // rejected 8 of the 14 advertised checks.
-    const validChecks = [
-      'phpcs',
-      'phpstan',
-      'eslint',
-      'stylelint',
-      'phpcompat',
-      'a11y-grep',
-      'php-lint',
-      'composer-audit',
-      'i18n',
-      'plugin-check',
-      'bundle-size',
-      'security-scan',
-      'performance-scan',
-      'pcp-deep',
-    ] as const;
-    if (!validChecks.includes(check as (typeof validChecks)[number])) {
-      return this.errorResult(
-        `Invalid check: ${check}. Must be one of: ${validChecks.join(', ')}`,
-      );
-    }
-
-    const result = runSingleCheck(pluginPath, check as (typeof validChecks)[number]);
-    return this.formatCheckerResult(result);
   }
 
   private formatCheckerResult(result: CheckerResult): CallToolResult {
@@ -1115,6 +824,6 @@ export class WpPluginQaServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('WP Plugin QA MCP Server v3.1.0 running on stdio');
+    console.error('WP Plugin QA MCP Server v3.2.0 running on stdio');
   }
 }
