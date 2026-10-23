@@ -6,8 +6,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export type CheckClass = 'roundtrip' | 'parity' | 'states' | 'presentation' | 'crawl' | 'release';
-export const CHECK_CLASSES: CheckClass[] = ['roundtrip', 'parity', 'states', 'presentation', 'crawl', 'release'];
+export type CheckClass = 'roundtrip' | 'parity' | 'states' | 'presentation' | 'crawl' | 'release' | 'static';
+export const CHECK_CLASSES: CheckClass[] = ['roundtrip', 'parity', 'states', 'presentation', 'crawl', 'release', 'static'];
 
 export interface Persona {
   /** Value for the site's autologin param (user id or login). */
@@ -130,6 +130,8 @@ export interface QaConfig {
     presentation?: Surface[];
     crawl?: CrawlPage[];
     release?: ReleaseConfig;
+    /** Shell guards the plugin owns (a WP-CLI test script each); replayed in the plugin directory. */
+    static?: { id: string; run: string }[];
   };
 }
 
@@ -191,6 +193,7 @@ export function guardIds(cfg: QaConfig): Set<string> {
     for (const c of (cfg.checks[cls] ?? []) as { id: string }[]) ids.add(`${cls}:${c.id}`);
   }
   for (const c of cfg.checks.crawl ?? []) ids.add(`crawl:${c.url}`);
+  for (const c of cfg.checks.static ?? []) ids.add(`static:${c.id}`);
   if (cfg.checks.release) for (const r of ['pot', 'build', 'refs']) ids.add(`release:${r}`);
   return ids;
 }

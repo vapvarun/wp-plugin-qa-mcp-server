@@ -9,6 +9,7 @@ import { CHECK_CLASSES, danglingGuards, loadConfig, loadEscapes, loadKnown, type
 import { installThemeSwitch, launch, removeThemeSwitch, Sessions } from './browser.js';
 import { crawl, parity, presentation, roundtrip, states, type Ctx, type Row } from './checks.js';
 import { checkBuild, checkPot, checkRefs } from './release.js';
+import { staticGuard } from './static.js';
 import type { WpCli } from './wp.js';
 
 export interface RunOptions {
@@ -57,7 +58,9 @@ export async function runChecks(o: RunOptions): Promise<Ledger> {
     rows.push(checkPot(o.pluginPath, r, cfg.slug), checkBuild(o.pluginPath, r), checkRefs(o.pluginPath, r));
   }
 
-  const live = CHECK_CLASSES.filter((c) => c !== 'release').some((c) => want(c) && (cfg.checks[c] as unknown[] | undefined)?.length);
+  for (const g of cfg.checks.static ?? []) if (want('static', g.id)) rows.push(staticGuard(o.pluginPath, o.wp, g));
+
+  const live = CHECK_CLASSES.filter((c) => c !== 'release' && c !== 'static').some((c) => want(c) && (cfg.checks[c] as unknown[] | undefined)?.length);
   if (live) {
     if (o.artifactsDir) mkdirSync(o.artifactsDir, { recursive: true });
     const browser = await launch();
