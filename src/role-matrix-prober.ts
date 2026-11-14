@@ -19,9 +19,21 @@ import type { PluginManifest, RestRouteInfo, AjaxHandlerInfo } from './types.js'
 
 export type RoleAuthType = 'cookie' | 'application-password' | 'nonce' | 'none';
 
-export type ExpectedOutcome = 'success' | 'forbidden' | 'not-logged-in';
+/**
+ * 'unknown' = the callback body was not resolved, so no outcome can be
+ * asserted. Such a probe is never a match; it only fails on a 5xx.
+ */
+export type ExpectedOutcome = 'success' | 'forbidden' | 'not-logged-in' | 'unknown';
 
-export type Verdict = 'match' | 'mismatch' | 'skipped';
+/**
+ * match / mismatch: the expectation was known and the probe ran.
+ * unknown:  the probe ran, the expectation could not be derived.
+ * not-run:  the role has no usable credentials, nothing was sent.
+ * skipped:  the route could not be addressed (regex param with no sample value).
+ */
+export type Verdict = 'match' | 'mismatch' | 'unknown' | 'not-run' | 'skipped';
+
+export type MatrixVerdict = 'PASS' | 'FAIL' | 'INCOMPLETE';
 
 export interface RoleCredentials {
   username?: string;
@@ -61,6 +73,17 @@ export interface RoleMatrixReport {
     totalRoles: number;
     totalProbes: number;
     unexpectedStatuses: number;
+    matched: number;
+    /** Probes sent whose expected outcome could not be derived. Not a pass. */
+    expectationUnknown: number;
+    /** Probes never sent: the role had no usable credentials. */
+    notRun: number;
+    /** Routes that could not be addressed (regex param with no sample value). */
+    skipped: number;
+    /** Role ids that were not probed at all. */
+    rolesNotRun: string[];
+    /** PASS only when every probe ran, had a known expectation, and matched. */
+    verdict: MatrixVerdict;
     timestamp: string;
   };
   endpoints: RoleMatrixRow[];
@@ -139,29 +162,54 @@ export async function probeRoleMatrix(
     rows.push(buildAjaxRow(handler));
   }
 
-  let unexpected = 0;
-  let totalProbes = 0;
+  const counts: Record<Verdict, number> = { match: 0, mismatch: 0, unknown: 0, 'not-run': 0, skipped: 0 };
 
   for (const row of rows) {
     for (const role of roles) {
       const expected = deriveExpected(row.permissionCallback, role);
       const observation = await probeOne(siteUrl, row, role, expected);
       row.observedByRole[role.id] = observation;
-      totalProbes++;
-      if (observation.verdict === 'mismatch') unexpected++;
+      counts[observation.verdict]++;
     }
   }
+
+  const rolesNotRun = roles.filter(r => buildAuthHeaders(r) === null).map(r => r.id);
 
   return {
     summary: {
       totalEndpoints: rows.length,
       totalRoles: roles.length,
-      totalProbes,
-      unexpectedStatuses: unexpected,
+      totalProbes: counts.match + counts.mismatch + counts.unknown,
+      unexpectedStatuses: counts.mismatch,
+      matched: counts.match,
+      expectationUnknown: counts.unknown,
+      notRun: counts['not-run'],
+      skipped: counts.skipped,
+      rolesNotRun,
+      verdict: matrixVerdict(counts, rolesNotRun),
       timestamp: new Date().toISOString(),
     },
     endpoints: rows,
   };
+}
+
+/** A matrix passes only on evidence: any mismatch fails it, anything unchecked leaves it incomplete. */
+export function matrixVerdict(counts: Record<Verdict, number>, rolesNotRun: string[]): MatrixVerdict {
+  if (counts.mismatch > 0) return 'FAIL';
+  if (rolesNotRun.length || counts.unknown || counts['not-run'] || counts.skipped || counts.match === 0) return 'INCOMPLETE';
+  return 'PASS';
+}
+
+export function formatRoleMatrix(report: RoleMatrixReport): string {
+  const s = report.summary;
+  const lines = [
+    `${s.verdict} wppqa_probe_roles: ${s.matched} match, ${s.unexpectedStatuses} mismatch, ${s.expectationUnknown} expectation unknown, ${s.notRun} not run, ${s.skipped} skipped`,
+  ];
+  if (s.rolesNotRun.length) lines.push(`NOT RUN - no usable credentials for role(s): ${s.rolesNotRun.join(', ')}. Pass roles[] with credentials to probe them.`);
+  if (s.expectationUnknown) lines.push(`${s.expectationUnknown} probe(s) hit a callback whose rule the scanner could not resolve; they are reported, never counted as a match.`);
+  if (s.skipped) lines.push(`${s.skipped} probe(s) skipped: the route has a regex parameter with no sample value.`);
+  if (s.verdict === 'INCOMPLETE') lines.push('INCOMPLETE is not a pass: the role matrix is only partly verified.');
+  return `${lines.join('\n')}\n\n${JSON.stringify(report, null, 2)}`;
 }
 
 // ─── Row Builders ──────────────────────────────────────────────────
@@ -189,8 +237,9 @@ function buildAjaxRow(handler: AjaxHandlerInfo): RoleMatrixRow {
     path: handler.action,
     file: handler.file,
     line: handler.line,
-    // AJAX has no explicit permission_callback. Treat nopriv presence as
-    // "guest allowed". The cap expectation derives from role semantics.
+    // AJAX has no explicit permission_callback; the handler does its own
+    // nonce + capability check, which this probe cannot read. Only "a guest
+    // cannot reach a non-nopriv action" is derivable (see deriveExpected).
     permissionCallback: handler.loggedOut ? 'nopriv' : 'logged-in',
     observedByRole: {},
   };
@@ -204,7 +253,7 @@ function normalizePermissionCallback(raw: string | undefined): string {
 
 // ─── Expected Outcome Derivation ───────────────────────────────────
 
-function deriveExpected(
+export function deriveExpected(
   permissionCallback: string | undefined,
   role: RoleProfile
 ): ExpectedOutcome {
@@ -229,21 +278,14 @@ function deriveExpected(
     return 'forbidden';
   }
 
-  // AJAX sentinels from buildAjaxRow.
-  if (pc === 'nopriv') return 'success';
-  if (pc === 'logged-in') {
-    return role.authType === 'none' ? 'not-logged-in' : 'success';
-  }
+  // AJAX sentinels from buildAjaxRow. WordPress itself refuses a guest on an
+  // action with no nopriv hook; what a logged-in role (or a guest on a nopriv
+  // action) gets depends on the handler body, which is not known here.
+  if (pc === 'logged-in' && role.authType === 'none') return 'not-logged-in';
 
-  // Unresolved / closure / unknown callback — best-effort: admin should
-  // succeed, everyone else is treated as success (so a 403 still flags as
-  // mismatch for admin; non-admin mismatches will be visible too).
-  if (pc === '<unresolved>') {
-    return role.expectedCapability === 'manage_options' ? 'success' : 'success';
-  }
-
-  // Default fallback: assume logged-in required.
-  return role.authType === 'none' ? 'not-logged-in' : 'success';
+  // nopriv / logged-in AJAX, closures, unresolved callbacks and named
+  // callbacks whose rule is not recognised: nothing can be asserted.
+  return 'unknown';
 }
 
 function isAdminOnlyCallback(pc: string): boolean {
@@ -277,12 +319,21 @@ async function probeOne(
     return {
       status: 0,
       expected,
-      verdict: 'skipped',
-      bodyExcerpt: `Role "${role.id}" has authType "${role.authType}" but credentials are missing or unusable.`,
+      verdict: 'not-run',
+      bodyExcerpt: `NOT RUN: role "${role.id}" has authType "${role.authType}" but credentials are missing or unusable.`,
     };
   }
 
   const url = buildUrl(siteUrl, row);
+  if (url === null) {
+    return {
+      status: 0,
+      expected,
+      verdict: 'skipped',
+      bodyExcerpt: 'SKIPPED: route has a regex parameter no sample value fits.',
+    };
+  }
+  const sampled = row.type === 'rest' && row.path.includes('(');
   const method = row.method;
   const init: RequestInit = {
     method,
@@ -319,18 +370,42 @@ async function probeOne(
     };
   }
 
-  const verdict = classifyVerdict(status, expected);
+  let verdict = classifyVerdict(status, expected, row.type);
+  // A 404 on a route addressed with a made-up sample value says the sample
+  // did not resolve (no such route match / no such object), not that the
+  // permission rule held. Never a match, and not evidence of a bug either.
+  if (sampled && status === 404) verdict = /rest_no_route/.test(bodyExcerpt ?? '') ? 'skipped' : 'unknown';
   const result: ProbeObservation = { status, expected, verdict };
-  if (verdict === 'mismatch' && bodyExcerpt) {
+  if (verdict !== 'match' && bodyExcerpt) {
     result.bodyExcerpt = bodyExcerpt;
   }
   return result;
 }
 
-function buildUrl(siteUrl: string, row: RoleMatrixRow): string {
+const SAMPLE_VALUES = ['1', 'sample', 'sample-1'];
+
+/**
+ * Replace each `(?P<name>pattern)` with a sample value the pattern accepts.
+ * Returns null when a parameter fits no sample, or regex syntax is left over:
+ * such a route cannot be addressed and must be reported as skipped.
+ */
+export function substituteRouteParams(path: string): string | null {
+  let ok = true;
+  const out = path.replace(/\(\?P<\w+>((?:[^()]|\([^()]*\))*)\)/g, (_m, pattern: string) => {
+    const sample = SAMPLE_VALUES.find(v => {
+      try { return new RegExp(`^(?:${pattern})$`).test(v); } catch { return false; }
+    });
+    if (sample === undefined) ok = false;
+    return sample ?? '';
+  });
+  return ok && !/[()\[\]\\+*?|^$]/.test(out) ? out : null;
+}
+
+function buildUrl(siteUrl: string, row: RoleMatrixRow): string | null {
   if (row.type === 'rest') {
-    const path = row.path.startsWith('/') ? row.path : `/${row.path}`;
-    return `${siteUrl}/wp-json${path}`;
+    const raw = row.path.startsWith('/') ? row.path : `/${row.path}`;
+    const path = substituteRouteParams(raw);
+    return path === null ? null : `${siteUrl}/wp-json${path}`;
   }
   // AJAX.
   const action = encodeURIComponent(row.path);
@@ -383,8 +458,10 @@ async function safeReadBody(res: Response): Promise<string> {
 
 // ─── Verdict Classification ────────────────────────────────────────
 
-function classifyVerdict(status: number, expected: ExpectedOutcome): Verdict {
+export function classifyVerdict(status: number, expected: ExpectedOutcome, type: 'rest' | 'ajax' = 'rest'): Verdict {
   if (status === 0) return 'mismatch';
+  // A server error is a defect whatever the permission rule is.
+  if (status >= 500) return 'mismatch';
 
   switch (expected) {
     case 'success':
@@ -395,8 +472,9 @@ function classifyVerdict(status: number, expected: ExpectedOutcome): Verdict {
       // "not allowed" when we expected forbidden.
       return status === 401 || status === 403 ? 'match' : 'mismatch';
     case 'not-logged-in':
-      return status === 401 || status === 403 ? 'match' : 'mismatch';
+      // admin-ajax.php answers a guest on a non-nopriv action with 400 "0".
+      return status === 401 || status === 403 || (type === 'ajax' && status === 400) ? 'match' : 'mismatch';
     default:
-      return 'mismatch';
+      return 'unknown';
   }
 }

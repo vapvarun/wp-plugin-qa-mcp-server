@@ -92,7 +92,20 @@ export async function runChecks(o) {
         rows.push({ guard: 'run', status: 'fail', detail: `no checks matched ${o.only?.join(',') || 'the config'}` });
         summary.fail++;
     }
-    return { ok: summary.fail === 0 && dangling.length === 0, mode, summary, rows, dangling, unguarded_failures: unguarded, known: knownRows, stale_known: staleKnown };
+    const { verdict, incomplete } = judge(rows, dangling, live || !!o.only?.length);
+    return { ok: verdict === 'PASS', verdict, incomplete, mode, summary, rows, dangling, unguarded_failures: unguarded, known: knownRows, stale_known: staleKnown };
+}
+/**
+ * The gate's verdict. A skip that is not a known, carded failure is a check that did not run, and a
+ * full run that never opened the site (`ranLive` false: the config holds only release checks) checked
+ * no behaviour. Neither fails the gate; neither is a pass.
+ */
+export function judge(rows, dangling, ranLive) {
+    const incomplete = rows.filter((x) => x.status === 'skip' && !x.known).map((x) => `${x.guard}: ${x.detail}`);
+    if (!ranLive)
+        incomplete.push('no live check ran: docs/qa/qa-config.json defines only release checks');
+    const failed = dangling.length > 0 || rows.some((x) => x.status === 'fail');
+    return { verdict: failed ? 'FAIL' : incomplete.length ? 'INCOMPLETE' : 'PASS', incomplete };
 }
 /**
  * Known failures stay visible but do not fail the gate; each one names its open card.
@@ -111,6 +124,7 @@ export function applyKnown(rows, known) {
         ks.forEach((k) => hit.add(k));
         const cards = [...new Set(ks.map((k) => known[k].card))].join(', ');
         r.status = 'skip';
+        r.known = true;
         r.detail = `known (card ${cards}): ${r.detail}`;
         excused.push(`${r.guard} -> card ${cards}`);
     }
@@ -120,11 +134,15 @@ export function applyKnown(rows, known) {
 }
 export function formatLedger(l) {
     const lines = [
-        `${l.ok ? 'PASS' : 'FAIL'} wppqa_run_checks (${l.mode}): ${l.summary.pass} pass, ${l.summary.fail} fail, ${l.summary.skip} skip`,
+        `${l.verdict} wppqa_run_checks (${l.mode}): ${l.summary.pass} pass, ${l.summary.fail} fail, ${l.summary.skip} skip`,
     ];
     for (const r of l.rows.filter((x) => x.status === 'fail')) {
         lines.push(`  x ${r.guard} ${r.detail}${r.where ? ` @ ${r.where}` : ''}${r.evidence ? ` [${r.evidence}]` : ''}`);
     }
+    if (l.incomplete.length)
+        lines.push(`${l.verdict === 'INCOMPLETE' ? 'INCOMPLETE is not a pass. ' : ''}Did not run: ${l.incomplete.join('; ')}`);
+    for (const r of l.rows.filter((x) => x.note))
+        lines.push(`  note ${r.guard} ${r.note}`);
     if (l.dangling.length)
         lines.push(`Dangling guards in audit/escapes.json (escape no longer replayed): ${l.dangling.join(', ')}`);
     if (l.known.length)

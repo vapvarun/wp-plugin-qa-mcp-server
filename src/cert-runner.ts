@@ -36,6 +36,8 @@ export interface CertifyOptions {
 
 export interface CertifyLedger {
   ok: boolean;
+  /** Generic engine only: no pass/fail row was produced, so nothing was certified. */
+  no_data?: boolean;
   summary: Record<string, number>;
   rows: Array<{ check: string; entity: string; status: string; detail: string }>;
 }
@@ -171,7 +173,13 @@ export function formatEngine(result: CertifyResult): string {
   const fails = rows.filter((r) => r.status === 'fail');
   const cands = rows.filter((r) => r.status === 'candidate');
   const lines: string[] = [];
-  lines.push(ok ? '✓ FUNCTIONAL CERTIFICATION PASSED' : '✗ FUNCTIONAL CERTIFICATION FAILED');
+  const ran = (summary.pass ?? 0) + (summary.fail ?? 0);
+  if (ran === 0) {
+    lines.push('NO DATA - FUNCTIONAL CERTIFICATION DID NOT RUN ANY CHECK (not a pass)');
+    lines.push('The manifest has no GET REST route and no oracle was supplied, so nothing was asserted.');
+  } else {
+    lines.push(ok ? '✓ FUNCTIONAL CERTIFICATION PASSED' : '✗ FUNCTIONAL CERTIFICATION FAILED');
+  }
   lines.push(`${summary.pass ?? 0} passed · ${summary.fail ?? 0} failed · ${summary.candidate ?? 0} candidates (unconfirmed)`);
   if (fails.length) {
     lines.push('\nFAILURES (confirmed — a feature does not behave):');

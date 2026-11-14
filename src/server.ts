@@ -1,6 +1,6 @@
 /**
  * WP Plugin QA MCP Server - Main Server
- * 28 tools exposed (33 defined; 5 hidden by EXCLUDED_NON_FUNCTIONAL in tools.ts).
+ * 29 tools exposed (33 defined; 4 hidden by EXCLUDED_NON_FUNCTIONAL in tools.ts).
  * Groups: discovery (scan), product-eval (admin/frontend/ux/templates/a11y),
  * systemic-misalignment (wiring, enum, rest-js contract, css contract,
  * editor-layout-bias, ux-guidelines, plugin-dev-rules, qa-coverage,
@@ -39,7 +39,7 @@ import { evaluateAdmin } from './admin-evaluator.js';
 import { evaluateFrontend } from './frontend-evaluator.js';
 import { buildReport, exportSarif, exportJunit } from './report-builder.js';
 import { runCertify, formatCertify, runEngine, formatEngine } from './cert-runner.js';
-import { probeRoleMatrix } from './role-matrix-prober.js';
+import { probeRoleMatrix, formatRoleMatrix } from './role-matrix-prober.js';
 import type { RoleProfile } from './role-matrix-prober.js';
 import { crossReferenceData } from './data-cross-reference.js';
 import { bootstrapPlan } from './plan-bootstrap.js';
@@ -271,21 +271,23 @@ export class WpPluginQaServer {
       freshSiteUrl: a.fresh_site_url as string | undefined,
       artifactsDir: a.artifacts_dir as string | undefined,
     });
-    return this.successResult(formatLedger(ledger));
+    return this.gateResult(formatLedger(ledger), ledger.summary.fail > 0 || ledger.dangling.length > 0);
   }
 
   private handleCertify(wpRoot: string, cliNamespace: string, check?: string): CallToolResult {
     if (!wpRoot) return this.errorResult('wp_root is required');
     if (!cliNamespace) return this.errorResult('cli_namespace is required (e.g. "buddynext")');
     const result = runCertify({ wpRoot, cliNamespace, check });
-    return this.successResult(formatCertify(result));
+    return this.gateResult(formatCertify(result), !result.ledger?.ok);
   }
 
   private handleAudit(wpRoot: string, pluginPath: string, oraclesPath?: string): CallToolResult {
     if (!wpRoot) return this.errorResult('wp_root is required');
     if (!pluginPath) return this.errorResult('plugin_path is required');
     const result = runEngine({ wpRoot, pluginPath, oraclesPath });
-    return this.successResult(formatEngine(result));
+    // Did not run, unparseable, or a failing row is an error. A ledger with
+    // no data is reported as NO DATA by formatEngine and is not a pass.
+    return this.gateResult(formatEngine(result), !result.ledger || (result.ledger.summary.fail ?? 0) > 0);
   }
 
   private async handleCheckApi(pluginPath: string, siteUrl: string): Promise<CallToolResult> {
@@ -524,26 +526,29 @@ export class WpPluginQaServer {
       allResults,
     );
 
-    // Step 6: Format output
+    // Step 6: Format output. Any error-level issue fails the audit, in every format.
+    const auditFailed = allResults.some(r => r.issues.some(i => i.type === 'error'));
     if (format === 'json') {
-      return this.successResult(JSON.stringify({
+      return this.gateResult(JSON.stringify({
+        verdict: auditFailed ? 'FAIL' : 'PASS',
         standardsNote: STANDARDS_NOTE,
         grade: qaReport.grade,
         score: qaReport.score,
         summary: qaReport.summary,
         productQuality: productResults,
         systemicMisalignment: systemicResults,
-      }, null, 2));
+      }, null, 2), auditFailed);
     }
     if (format === 'sarif' || format === 'junit') {
       // Export the product + systemic QaReport. SARIF targets GitHub Code
       // Scanning and VS Code's SARIF viewer; JUnit targets CI consumption.
-      return this.successResult(
+      return this.gateResult(
         format === 'sarif' ? exportSarif(qaReport) : exportJunit(qaReport),
+        auditFailed,
       );
     }
 
-    let output = `FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
+    let output = `${auditFailed ? 'FAIL' : 'PASS'} FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
     output += `${STANDARDS_NOTE}\n\n`;
 
     const renderGroup = (title: string, results: CheckerResult[]): string => {
@@ -564,7 +569,7 @@ export class WpPluginQaServer {
     output += renderGroup('PRODUCT QUALITY', productResults);
     output += renderGroup('SYSTEMIC MISALIGNMENT', systemicResults);
 
-    return this.successResult(output);
+    return this.gateResult(output, auditFailed);
   }
 
   // ─── Role / Data / Plan Handlers ────────────────────────────
@@ -577,7 +582,7 @@ export class WpPluginQaServer {
     if (!pluginPath) return this.errorResult('plugin_path is required');
     if (!siteUrl) return this.errorResult('site_url is required');
     const report = await probeRoleMatrix({ pluginPath, siteUrl, roles });
-    return this.successResult(JSON.stringify(report, null, 2));
+    return this.gateResult(formatRoleMatrix(report), report.summary.verdict === 'FAIL');
   }
 
   private handleCrossReferenceData(pluginPath: string): CallToolResult {
@@ -691,6 +696,14 @@ export class WpPluginQaServer {
   private successResult(message: string): CallToolResult {
     return {
       content: [{ type: 'text', text: message } as TextContent],
+    };
+  }
+
+  /** A gate's report body, flagged as an MCP error when its verdict is FAIL. */
+  private gateResult(message: string, failed: boolean): CallToolResult {
+    return {
+      content: [{ type: 'text', text: message } as TextContent],
+      isError: failed,
     };
   }
 

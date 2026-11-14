@@ -9,7 +9,17 @@ import { pageRules, walkRules } from './rules.js';
 import { wpEval, type WpCli } from './wp.js';
 
 export type Status = 'pass' | 'fail' | 'skip';
-export interface Row { guard: string; status: Status; detail: string; where?: string; evidence?: string }
+export interface Row {
+  guard: string;
+  status: Status;
+  detail: string;
+  where?: string;
+  evidence?: string;
+  /** A failure excused by an open card in audit/known-failures.json (status is then 'skip'). */
+  known?: boolean;
+  /** A limit of this run the reader must see even on a pass (e.g. a capped link walk). */
+  note?: string;
+}
 
 export interface Ctx {
   cfg: QaConfig;
@@ -196,13 +206,48 @@ export async function presentation(c: Ctx, s: Surface, themes: ThemeConfig[], wi
   });
 }
 
-/** Fresh-install walk: every page answers, shows no PHP error, no empty list shell, and no broken plugin link. */
+export const CRAWL_LINK_CAP = 60;
+
+/** The same-origin links a crawl follows, capped; `total` says how many qualified so the cap is visible. */
+export function crawlLinks(links: string[], origin: string, cap = CRAWL_LINK_CAP): { check: string[]; total: number } {
+  const own = links.filter((h) => h.startsWith(origin) && !h.includes('logout') && !h.includes('action=delete') && !h.includes('_wpnonce'));
+  return { check: own.slice(0, cap), total: own.length };
+}
+
+interface Watchable { on(event: string, fn: (arg: any) => void): unknown }
+
+/**
+ * Collect everything a page reports as broken while it loads: uncaught JS
+ * errors, console errors, and same-origin requests that fail or answer 4xx/5xx.
+ */
+export function watchPage(page: Watchable, origin: string): { js: string[]; requests: string[] } {
+  const seen = { js: [] as string[], requests: [] as string[] };
+  const own = (u: string) => u.startsWith(origin);
+  page.on('pageerror', (e) => seen.js.push(String(e.message).split('\n')[0]));
+  page.on('console', (m) => {
+    // The browser logs a generic line for each failed resource; the response listener names the URL.
+    if (m.type() === 'error' && !/^Failed to load resource/.test(m.text())) seen.js.push(`console: ${m.text().split('\n')[0]}`);
+  });
+  page.on('requestfailed', (r) => {
+    const why = r.failure()?.errorText ?? 'failed';
+    // An aborted request is the page navigating away or cancelling its own fetch.
+    if (own(r.url()) && !/ERR_ABORTED/.test(why)) seen.requests.push(`${r.url()} -> ${why}`);
+  });
+  page.on('response', (r) => {
+    // The page's own status is reported by the caller.
+    if (own(r.url()) && r.status() >= 400 && !r.request().isNavigationRequest()) seen.requests.push(`${r.url()} -> ${r.status()}`);
+  });
+  return seen;
+}
+
+/** Fresh-install walk: every page answers, shows no PHP error, no empty list shell, no JS/console error, no failed same-origin request, and no broken plugin link. */
 export async function crawl(c: Ctx, p: CrawlPage): Promise<Row[]> {
   const guard = `crawl:${p.url}`;
   const page = await c.sessions.page({ persona: p.persona, dark: false, width: 1440 });
-  const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(e.message.split('\n')[0]));
+  const origin = new URL(c.base).origin;
+  const seen = watchPage(page, origin);
   const bad: string[] = [];
+  let walked = { check: [] as string[], total: 0 };
   try {
     const status = await gotoReady(page, url(c, p.url), p.open);
     if (status >= 400) bad.push(`HTTP ${status}`);
@@ -213,14 +258,19 @@ export async function crawl(c: Ctx, p: CrawlPage): Promise<Row[]> {
       // getAttribute, not .href: an <a> inside an SVG has an SVGAnimatedString href that serialises to undefined.
       ...new Set(as.filter((a) => !a.closest('#wpadminbar')).map((a) => new URL(a.getAttribute('href') ?? '', document.baseURI).href)),
     ]);
-    const origin = new URL(c.base).origin;
-    for (const href of links.filter((h) => h.startsWith(origin) && !h.includes('logout') && !h.includes('action=delete') && !h.includes('_wpnonce')).slice(0, 60)) {
+    walked = crawlLinks(links, origin);
+    for (const href of walked.check) {
       const r = await page.request.get(href, { maxRedirects: 5 }).catch(() => null);
       if (!r || r.status() >= 400) bad.push(`link ${href} -> ${r ? r.status() : 'no response'}`);
     }
-    if (errors.length) bad.push(`JS errors: ${errors.slice(0, 3).join('; ')}`);
+    if (seen.js.length) bad.push(`JS errors: ${seen.js.slice(0, 3).join('; ')}`);
+    if (seen.requests.length) bad.push(`failed requests: ${[...new Set(seen.requests)].slice(0, 5).join('; ')}`);
   } finally {
     await page.close();
   }
-  return [bad.length ? { guard, status: 'fail', detail: bad.join(' | '), where: p.url } : { guard, status: 'pass', detail: 'page clean, links resolve' }];
+  const capped = walked.total > walked.check.length;
+  const note = capped ? `capped: checked ${walked.check.length} of ${walked.total} same-origin links` : undefined;
+  return [bad.length
+    ? { guard, status: 'fail', detail: bad.join(' | '), where: p.url, note }
+    : { guard, status: 'pass', detail: `page clean, ${walked.check.length} links resolve`, note }];
 }

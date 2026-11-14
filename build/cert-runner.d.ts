@@ -27,6 +27,8 @@ export interface CertifyOptions {
 }
 export interface CertifyLedger {
     ok: boolean;
+    /** Generic engine only: no pass/fail row was produced, so nothing was certified. */
+    no_data?: boolean;
     summary: Record<string, number>;
     rows: Array<{
         check: string;

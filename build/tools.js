@@ -170,7 +170,7 @@ const allTools = [
     // ─── 9. API (live site) ───────────────────────────────────────
     {
         name: 'wppqa_check_api',
-        description: 'Verify REST endpoints and AJAX handlers against a running Local WP site. Tests auth/unauth access, nonce validation, malformed input handling, response format. Requires Local WP running.',
+        description: 'Smoke-test REST routes and AJAX handlers against a running Local WP site, logged in as admin through ?autologin=1 (errors out if that login fails). Per REST route: one authenticated GET must not return 5xx; a route with a write method is also called unauthenticated and fails if that succeeds (2xx). Per AJAX action: one authenticated POST with no nonce must not return 5xx; a "0"/"-1" or HTML body is a warning. Regex route params get a sample value; routes no sample fits are reported as skipped, not passed. It does NOT test nonce validation, malformed input, per-role access (use wppqa_probe_roles) or response shape.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -208,7 +208,7 @@ const allTools = [
     // ─── 11. Browser (live site) ──────────────────────────────────
     {
         name: 'wppqa_check_browser',
-        description: 'Generate Playwright E2E test specs based on discovered features. Creates test files for admin pages, settings, CPTs, shortcodes, blocks. Requires site_url.',
+        description: 'GENERATES Playwright .spec.ts files (admin pages, blocks, responsive, forms) from discovered features. It executes nothing and opens no browser, so it never reports a pass: run the specs with `npx playwright test`, or use wppqa_run_checks / the Playwright MCP for real browser checks. Requires site_url.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -227,7 +227,7 @@ const allTools = [
     // ─── 13. Role-matrix REST/AJAX prober ─────────────────────────
     {
         name: 'wppqa_probe_roles',
-        description: "Probe every discovered REST endpoint and AJAX action as each WordPress role (guest/subscriber/advertiser/admin by default) and report where observed HTTP status diverges from what the route's permission_callback says should happen. Catches capability/role mismatches — e.g. advertiser-portal routes accidentally gated with manage_options that would 403 in production — before release.",
+        description: "Probe every discovered REST endpoint and AJAX action as each WordPress role (guest/subscriber/advertiser/admin by default) and report where observed HTTP status diverges from what the route's permission_callback says should happen. Verdict is PASS only when every probe ran with a known expectation and matched; FAIL (isError) on any mismatch or 5xx; INCOMPLETE when a role has no credentials (NOT RUN - the default non-guest roles ship without credentials, pass roles[] to probe them), when a callback's rule cannot be derived (closures, custom methods, AJAX handlers: expectation unknown, never a match), or when a regex route fits no sample value (skipped). Catches capability/role mismatches — e.g. advertiser-portal routes accidentally gated with manage_options that would 403 in production — before release.",
         inputSchema: {
             type: 'object',
             properties: {
@@ -625,7 +625,7 @@ const allTools = [
     // ─── Live checks from the plugin's qa-config (the gate every plugin shares) ──
     {
         name: 'wppqa_run_checks',
-        description: 'Run every live check a plugin configures in docs/qa/qa-config.json against its site, then hold the result against audit/escapes.json. Classes: roundtrip (untouched form save must not change the record; each checkbox flip must), parity (each entry-point form can set every REST write arg), states (seeded fixtures render as expected: $0 hides refund, every status listed, no second enable switch), presentation (computed-style rules across the theme x light/dark x width matrix, dark entered through the theme\'s own toggle), crawl (fresh-install walk: HTTP status, PHP errors, empty list shells, broken links), release (pot freshness, build fails loudly, no unguarded refs to zip-excluded files). Fast and full modes differ only in the theme/width matrix. Fails on any failing row or a guard id in escapes.json that no longer exists.',
+        description: 'Run every live check a plugin configures in docs/qa/qa-config.json against its site, then hold the result against audit/escapes.json. Classes: roundtrip (untouched form save must not change the record; each checkbox flip must), parity (each entry-point form can set every REST write arg), states (seeded fixtures render as expected: $0 hides refund, every status listed, no second enable switch), presentation (computed-style rules across the theme x light/dark x width matrix, dark entered through the theme\'s own toggle), crawl (fresh-install walk: HTTP status, PHP errors, empty list shells, broken links), release (pot freshness, build fails loudly, no unguarded refs to zip-excluded files). Fast and full modes differ only in the theme/width matrix. Verdict: FAIL (isError) on any failing row or a guard id in escapes.json that no longer exists; INCOMPLETE (not a pass) when a release check could not run or the config defines no live check; PASS otherwise. The crawl also fails on console errors and failed or 4xx/5xx same-origin requests, and notes when its 60-link walk was capped.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -672,7 +672,6 @@ const allTools = [
 // The deterministic behavioural gate (wppqa_certify) and the cross-layer wiring
 // / contract / live-site / role / journey checks are the functionality core.
 const EXCLUDED_NON_FUNCTIONAL = new Set([
-    'wppqa_check_plugin_dev_rules', // dev-rule linting — hygiene
     'wppqa_check_editor_layout_bias', // code-pattern smell — hygiene
     'wppqa_check_ux', // advisory UX grep — noise (real UX = browser/journey)
     'wppqa_check_ux_guidelines', // advisory UX guideline grep — noise

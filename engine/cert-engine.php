@@ -9,12 +9,17 @@
  * Checks:
  *   boot      — dispatch every GET REST route in the manifest; fail any that 500s.
  *   contract  — for each oracle (oracles.json), flip the option/flag OFF then ON and assert the
- *               disabled error code appears when off, absent when on.
+ *               disabled error code appears when off, absent when on. A `kind: "feature"` oracle
+ *               flips key `id` inside an array option; the plugin names that option itself, as
+ *               `option` on the oracle or `feature_option` at the top of oracles.json. The engine
+ *               knows no plugin's option names.
  *   candidate — surface the manifest's STATIC smells (option written-but-never-enforced,
  *               feature missing a layer, hook fired-but-no-listener) as UNCONFIRMED findings
  *               for a human/agent to confirm or add an oracle for. Never counted as pass/fail.
  *
- * Output: a single JSON ledger on stdout: { ok, summary{pass,fail,candidate}, rows[] }.
+ * Output: a single JSON ledger on stdout: { ok, no_data, summary{pass,fail,candidate}, rows[] }.
+ * `ok` is true only when at least one check ran and none failed; a run with no pass/fail row
+ * sets `no_data` and is not a pass.
  *
  * No plugin classes are used — only WP core (rest_do_request, get_option, update_option).
  */
@@ -33,7 +38,7 @@ $cert_manifest = $cert_manifest_path && is_readable( $cert_manifest_path )
 	? json_decode( (string) file_get_contents( $cert_manifest_path ), true )
 	: null;
 if ( ! is_array( $cert_manifest ) ) {
-	echo wp_json_encode( array( 'ok' => false, 'summary' => array( 'pass' => 0, 'fail' => 0, 'candidate' => 0 ), 'rows' => array(), 'error' => 'manifest unreadable' ) );
+	echo wp_json_encode( array( 'ok' => false, 'no_data' => true, 'summary' => array( 'pass' => 0, 'fail' => 0, 'candidate' => 0 ), 'rows' => array(), 'error' => 'manifest unreadable' ) );
 	exit( 0 );
 }
 $cert_oracles = $cert_oracles_path && is_readable( $cert_oracles_path )
@@ -99,17 +104,38 @@ foreach ( $cert_oracle_rows as $o ) {
 	$method   = isset( $o['method'] ) ? (string) $o['method'] : 'POST';
 	$params   = isset( $o['params'] ) && is_array( $o['params'] ) ? $o['params'] : array();
 	if ( '' === $id || '' === $route || '' === $off_code ) {
+		$cert_rows[] = array(
+			'check'  => 'contract',
+			'entity' => '' !== $id ? $id : '(oracle without id)',
+			'status' => 'fail',
+			'detail' => 'oracle is missing id, route or off_code, so it asserts nothing',
+		);
 		continue;
 	}
 
-	$snap = ( 'feature' === $kind ) ? get_option( 'buddynext_features', '__cert_absent__' ) : get_option( $id, '__cert_absent__' );
+	// The array option a "feature" oracle lives in comes from the plugin's own oracles file.
+	$name = $id;
+	if ( 'feature' === $kind ) {
+		$name = isset( $o['option'] ) ? (string) $o['option'] : ( isset( $cert_oracles['feature_option'] ) ? (string) $cert_oracles['feature_option'] : '' );
+		if ( '' === $name ) {
+			$cert_rows[] = array(
+				'check'  => 'contract',
+				'entity' => $id,
+				'status' => 'fail',
+				'detail' => 'kind=feature oracle names no option: set "option" on the oracle or "feature_option" at the top of the oracles file',
+			);
+			continue;
+		}
+	}
 
-	$cert_set = function ( $on ) use ( $id, $kind ) {
+	$snap = get_option( $name, '__cert_absent__' );
+
+	$cert_set = function ( $on ) use ( $id, $kind, $name ) {
 		if ( 'feature' === $kind ) {
-			$opt = get_option( 'buddynext_features', array() );
+			$opt = get_option( $name, array() );
 			if ( ! is_array( $opt ) ) { $opt = array(); }
 			$opt[ $id ] = $on;
-			update_option( 'buddynext_features', $opt, false );
+			update_option( $name, $opt, false );
 		} else {
 			update_option( $id, $on ? '1' : '0', false );
 		}
@@ -121,7 +147,6 @@ foreach ( $cert_oracle_rows as $o ) {
 	$on = $cert_dispatch( $method, $route, $params );
 
 	// Restore.
-	$name = ( 'feature' === $kind ) ? 'buddynext_features' : $id;
 	if ( '__cert_absent__' === $snap ) { delete_option( $name ); } else { update_option( $name, $snap, false ); }
 
 	$pass = ( $off['code'] === $off_code ) && ( $on['code'] !== $off_code );
@@ -176,8 +201,11 @@ foreach ( $cert_rows as $row ) {
 	$s = $row['status'];
 	if ( isset( $cert_summary[ $s ] ) ) { ++$cert_summary[ $s ]; }
 }
+// Nothing asserted (no GET route, no oracle) is "no data", never a pass.
+$cert_no_data = ( 0 === $cert_summary['pass'] + $cert_summary['fail'] );
 echo wp_json_encode( array(
-	'ok'      => ( 0 === $cert_summary['fail'] ),
+	'ok'      => ( 0 === $cert_summary['fail'] && ! $cert_no_data ),
+	'no_data' => $cert_no_data,
 	'summary' => $cert_summary,
 	'rows'    => $cert_rows,
 ) );

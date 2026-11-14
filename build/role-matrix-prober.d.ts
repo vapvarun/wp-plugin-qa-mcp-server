@@ -12,8 +12,19 @@
  */
 import type { PluginManifest } from './types.js';
 export type RoleAuthType = 'cookie' | 'application-password' | 'nonce' | 'none';
-export type ExpectedOutcome = 'success' | 'forbidden' | 'not-logged-in';
-export type Verdict = 'match' | 'mismatch' | 'skipped';
+/**
+ * 'unknown' = the callback body was not resolved, so no outcome can be
+ * asserted. Such a probe is never a match; it only fails on a 5xx.
+ */
+export type ExpectedOutcome = 'success' | 'forbidden' | 'not-logged-in' | 'unknown';
+/**
+ * match / mismatch: the expectation was known and the probe ran.
+ * unknown:  the probe ran, the expectation could not be derived.
+ * not-run:  the role has no usable credentials, nothing was sent.
+ * skipped:  the route could not be addressed (regex param with no sample value).
+ */
+export type Verdict = 'match' | 'mismatch' | 'unknown' | 'not-run' | 'skipped';
+export type MatrixVerdict = 'PASS' | 'FAIL' | 'INCOMPLETE';
 export interface RoleCredentials {
     username?: string;
     appPassword?: string;
@@ -48,6 +59,17 @@ export interface RoleMatrixReport {
         totalRoles: number;
         totalProbes: number;
         unexpectedStatuses: number;
+        matched: number;
+        /** Probes sent whose expected outcome could not be derived. Not a pass. */
+        expectationUnknown: number;
+        /** Probes never sent: the role had no usable credentials. */
+        notRun: number;
+        /** Routes that could not be addressed (regex param with no sample value). */
+        skipped: number;
+        /** Role ids that were not probed at all. */
+        rolesNotRun: string[];
+        /** PASS only when every probe ran, had a known expectation, and matched. */
+        verdict: MatrixVerdict;
         timestamp: string;
     };
     endpoints: RoleMatrixRow[];
@@ -60,3 +82,14 @@ export interface ProbeRoleMatrixOptions {
 }
 export declare const DEFAULT_ROLES: RoleProfile[];
 export declare function probeRoleMatrix(opts: ProbeRoleMatrixOptions): Promise<RoleMatrixReport>;
+/** A matrix passes only on evidence: any mismatch fails it, anything unchecked leaves it incomplete. */
+export declare function matrixVerdict(counts: Record<Verdict, number>, rolesNotRun: string[]): MatrixVerdict;
+export declare function formatRoleMatrix(report: RoleMatrixReport): string;
+export declare function deriveExpected(permissionCallback: string | undefined, role: RoleProfile): ExpectedOutcome;
+/**
+ * Replace each `(?P<name>pattern)` with a sample value the pattern accepts.
+ * Returns null when a parameter fits no sample, or regex syntax is left over:
+ * such a route cannot be addressed and must be reported as skipped.
+ */
+export declare function substituteRouteParams(path: string): string | null;
+export declare function classifyVerdict(status: number, expected: ExpectedOutcome, type?: 'rest' | 'ajax'): Verdict;

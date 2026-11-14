@@ -160,17 +160,22 @@ function checkRawPostIteration(phpFiles, pluginPath) {
     return issues;
 }
 /**
- * Scan every PHP file in includes/api/ for `permission_callback` references
- * and collect the callable names they point to. A handler mentioned there is
- * authorized at the route layer — a nonce check inside its body does not
- * need a sibling current_user_can().
+ * Collect the REST handlers that are authorized at the route layer: a route
+ * `callback` whose own args array also carries a `permission_callback` (other
+ * than `__return_true`), plus the permission callbacks themselves. A nonce
+ * check inside one of those does not need a sibling current_user_can().
+ *
+ * `$this` callbacks are keyed to the file that registers them, so a handler
+ * of the same name in another class is not exempted by accident.
+ * ponytail: name-based, not type-resolved. A `[ $other, 'name' ]` or
+ * `'Class::name'` callable exempts every function called `name`; resolve the
+ * class through the php-ast sidecar if that ever hides a real finding.
  */
-function collectRestProtectedHandlers(phpFiles) {
+export function collectRestProtectedHandlers(phpFiles) {
     const names = new Set();
-    const classes = new Set();
+    const byFile = new Map();
+    const callable = /(?:(?:array\s*\(|\[)\s*(\$this|[^,\]\)]+),\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*[\]\)]|['"](?:[A-Za-z_][A-Za-z0-9_\\]*::)?([A-Za-z_][A-Za-z0-9_]*)['"])/;
     for (const file of phpFiles) {
-        if (!file.includes('/api/') && !file.includes('/rest/'))
-            continue;
         let content;
         try {
             content = readFileSync(file, 'utf-8');
@@ -178,28 +183,89 @@ function collectRestProtectedHandlers(phpFiles) {
         catch {
             continue;
         }
-        // String callables referenced from permission_callback.
-        const cbRe = /permission_callback['"]\s*=>\s*(?:\[[^\]]*?['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]\s*\]|['"]([A-Za-z_][A-Za-z0-9_\\]*)::([A-Za-z_][A-Za-z0-9_]*)['"])/g;
-        let m;
-        while ((m = cbRe.exec(content)) !== null) {
-            if (m[1])
-                names.add(m[1]);
-            if (m[2] && m[3]) {
-                names.add(m[3]);
-                classes.add(m[2]);
+        if (!/register_rest_route\s*\(/.test(content))
+            continue;
+        const local = new Set();
+        const add = (m) => {
+            if (!m)
+                return;
+            if (m[2] && m[1].trim() === '$this')
+                local.add(m[2]);
+            else
+                names.add(m[2] ?? m[3]);
+        };
+        const keyRe = /(permission_)?callback['"]\s*=>\s*/g;
+        for (const k of content.matchAll(keyRe)) {
+            const at = (k.index ?? 0) + k[0].length;
+            const value = content.slice(at, at + 200);
+            if (k[1]) {
+                // The permission callback itself.
+                if (!/^['"]__return_true['"]/.test(value))
+                    add(value.match(new RegExp(`^${callable.source}`)));
+                continue;
             }
+            // A route callback: exempt only when its own args array is guarded.
+            const args = enclosingBrackets(content, k.index ?? 0);
+            const perm = args.match(/permission_callback['"]\s*=>\s*(\S+)/);
+            if (perm && !/^['"]__return_true['"]/.test(perm[1]))
+                add(value.match(new RegExp(`^${callable.source}`)));
         }
-        // When a controller class defines register_rest_route AND uses
-        // permission_callback anywhere, assume its methods are route-guarded.
-        if (/register_rest_route\s*\(/.test(content) &&
-            /permission_callback/.test(content)) {
-            const classMatches = content.matchAll(/class\s+([A-Z][A-Za-z0-9_]*)\b/g);
-            for (const cm of classMatches) {
-                classes.add(cm[1]);
+        if (local.size)
+            byFile.set(file, local);
+    }
+    return { names, byFile };
+}
+/** Text of the innermost ( ) or [ ] pair around idx (the route args array a key sits in). */
+function enclosingBrackets(content, idx) {
+    let depth = 0;
+    let start = 0;
+    for (let i = idx; i >= 0; i--) {
+        const c = content[i];
+        if (c === ')' || c === ']')
+            depth++;
+        else if (c === '(' || c === '[') {
+            if (depth === 0) {
+                start = i;
+                break;
+            }
+            depth--;
+        }
+    }
+    depth = 0;
+    for (let i = start; i < content.length; i++) {
+        const c = content[i];
+        if (c === '(' || c === '[')
+            depth++;
+        else if (c === ')' || c === ']') {
+            depth--;
+            if (depth === 0)
+                return content.slice(start, i + 1);
+        }
+    }
+    return content.slice(start);
+}
+/**
+ * Body of the innermost function, method or closure containing idx, or null
+ * at file top level. Brace-counted, so a brace inside a string can end it early.
+ */
+export function enclosingFunctionBody(content, idx) {
+    let best = null;
+    for (const m of content.matchAll(/\bfunction\b[^{;]*\{/g)) {
+        const open = (m.index ?? 0) + m[0].length - 1;
+        if (open > idx)
+            break;
+        let depth = 0;
+        for (let i = open; i < content.length; i++) {
+            if (content[i] === '{')
+                depth++;
+            else if (content[i] === '}' && --depth === 0) {
+                if (i >= idx)
+                    best = content.slice(open, i + 1);
+                break;
             }
         }
     }
-    return { names, classes };
+    return best;
 }
 /**
  * Return the function/method header enclosing the given character index, or
@@ -249,12 +315,11 @@ function enclosingFunction(content, idx) {
 /**
  * security.md: "Always pair nonces with capability checks". If a file has
  * `wp_verify_nonce` / `check_admin_referer` but no `current_user_can` nearby
- * (within 50 lines), flag.
+ * in the same function, flag.
  *
- * Tuning: suppress the flag when the enclosing function is clearly REST-
- * protected via a `permission_callback` elsewhere, or when the file itself
- * routes authorization through a `Permission_Engine::can(` surrogate inside
- * the function body.
+ * Tuning: suppress the flag when the enclosing function is a REST callback
+ * registered with its own `permission_callback`, or routes authorization
+ * through a `Permission_Engine::can(` surrogate inside the function body.
  */
 function checkNonceCapabilityPairing(phpFiles, pluginPath) {
     const issues = [];
@@ -278,9 +343,14 @@ function checkNonceCapabilityPairing(phpFiles, pluginPath) {
             const col = (match.index ?? 0) - content.lastIndexOf('\n', (match.index ?? 0) - 1) - 1;
             if (isCommentedOut(line, col))
                 continue;
+            // The capability check must sit in the same function, method or
+            // closure as the nonce check: a current_user_can() in the next handler
+            // down the file authorizes nothing here. Top-level procedural code has
+            // no function to scope to, so it keeps a line window.
             const windowStart = Math.max(0, lineNum - 5);
             const windowEnd = Math.min(lines.length, lineNum + 50);
-            const windowText = lines.slice(windowStart, windowEnd).join('\n');
+            const windowText = enclosingFunctionBody(content, match.index ?? 0) ??
+                lines.slice(windowStart, windowEnd).join('\n');
             // Strong signal: explicit capability check.
             if (/\bcurrent_user_can\s*\(/.test(windowText))
                 continue;
@@ -300,19 +370,11 @@ function checkNonceCapabilityPairing(phpFiles, pluginPath) {
                 /(?:_\.\s*\$|_\s*\.\s*\$|_'\s*\.\s*\$|\$course_id|\$user_id|\$post_id|\$entity_id)/.test(matchLine + windowTrim);
             if (looksUserScoped)
                 continue;
-            // REST-protected handler? Check the enclosing method/class.
-            const enclosing = enclosingFunction(content, match.index ?? 0);
-            if (enclosing) {
-                if (enclosing.funcName && rest.names.has(enclosing.funcName))
-                    continue;
-                if (enclosing.className && rest.classes.has(enclosing.className))
-                    continue;
-            }
-            // REST controllers almost always declare their own permission_callback
-            // on every route. If both signals appear in the same file, treat the
-            // file as route-guarded.
-            if (/register_rest_route\s*\(/.test(content) &&
-                /permission_callback/.test(content))
+            // REST handler authorized at the route layer? Only the callbacks that
+            // carry their own permission_callback are exempt, never the whole
+            // file or class: an AJAX handler next to a guarded route is still bare.
+            const fn = enclosingFunction(content, match.index ?? 0)?.funcName;
+            if (fn && (rest.names.has(fn) || rest.byFile.get(file)?.has(fn)))
                 continue;
             issues.push({
                 id: generateTestId('plugin-dev-rules'),

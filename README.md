@@ -23,7 +23,7 @@ This server deliberately does **not** re-run coding-standards or static analysis
 - **Market / competitive / roadmap strategy** -> the `product-strategy` skill
   (moved out of here — it was never QA)
 
-## Tools (28)
+## Tools (29)
 
 ### Discovery
 | Tool | Description |
@@ -45,15 +45,16 @@ This server deliberately does **not** re-run coding-standards or static analysis
 | `wppqa_check_template_contract` | Loader ↔ template variable contract drift |
 | `wppqa_cross_reference_data` | Map every meta/option/transient/DB column read & written; flag stale-read stores (reader with no writer) — the "UI always shows 0" pattern |
 | `wppqa_check_qa_coverage` | Manifest → test coverage gate, baseline-shrink |
+| `wppqa_check_plugin_dev_rules` | wp-plugin-development skill rules: no `alert()`/`confirm()`, no iteration over `$_POST`/`$_GET`, a nonce check paired with a capability check in the same function (REST callbacks with their own `permission_callback` exempt), activation-hook placement, uninstall guard, tap targets |
 | `wppqa_check_templates` | Theme override paths, hooks in templates, lifecycle hook placement |
 
 ### Runtime / live-site
 | Tool | Description |
 |------|-------------|
-| `wppqa_check_api` | REST + AJAX against a running Local WP site (auth/unauth, nonce, input validation, response format) |
+| `wppqa_check_api` | Smoke test against a running Local WP site, logged in as admin via `?autologin=1` (errors out if the login fails). Each REST route: one authenticated GET must not 5xx; a route with a write method is also called unauthenticated and fails if that returns 2xx. Each AJAX action: one authenticated POST must not 5xx. Regex-param routes no sample value fits are reported as skipped. Does not test nonces, input validation, per-role access or response shape |
 | `wppqa_check_database` | Custom table schema, settings persistence, CPT data, uninstall cleanup, orphaned data |
-| `wppqa_check_browser` | Playwright admin page loads, JS console errors, responsive viewports, form submissions |
-| `wppqa_probe_roles` | Fire every REST/AJAX route as each configured role and compare observed status to the route's declared `permission_callback` — catches "subscriber reaches a `manage_options` route" before it ships |
+| `wppqa_check_browser` | Generates Playwright `.spec.ts` files (admin pages, blocks, responsive, forms). Executes nothing and never reports a pass; run the specs yourself or use `wppqa_run_checks` for real browser checks |
+| `wppqa_probe_roles` | Fire every REST/AJAX route as each configured role and compare observed status to the route's declared `permission_callback` — catches "subscriber reaches a `manage_options` route" before it ships. PASS needs every probe run with a known expectation; roles without credentials are NOT RUN and unresolved callbacks are "expectation unknown", both leave the result INCOMPLETE |
 | `wppqa_check_scale` | Index coverage, unbounded reads, N+1 patterns at scale |
 
 ### Product & accessibility
@@ -75,6 +76,18 @@ This server deliberately does **not** re-run coding-standards or static analysis
 |------|-------------|
 | `wppqa_bootstrap_plan` | Generate a `plan/` folder (README, role-matrix, fixtures, flows, regression, coverage) derived from the live manifest |
 | `wppqa_learn_from_basecamp` | Consume pre-fetched Basecamp cards into `plan/basecamp/ledger.*` with fix-SHA extraction, hot-spots, RFT aging, and Jaccard duplicate detection |
+
+## Gate verdicts
+
+A gate tool leads its report with one verdict, and only evidence earns a pass:
+
+| Verdict | Meaning | MCP `isError` |
+|---------|---------|---------------|
+| `PASS` | Every check ran and held | no |
+| `FAIL` | A check failed (the report body is still returned) | yes |
+| `INCOMPLETE` / `NOT RUN` / `NO DATA` | Nothing failed, but part of the gate did not run: a role without credentials, an unresolved permission callback, a skipped release check, a config with no live check, a certification with nothing to assert. Not a pass | no |
+
+`wppqa_run_checks`, `wppqa_probe_roles`, `wppqa_audit_plugin`, `wppqa_audit`, `wppqa_certify` and every `wppqa_check_*` tool follow this.
 
 ## Per-plugin `plan/` convention
 

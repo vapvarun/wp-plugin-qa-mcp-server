@@ -1,6 +1,6 @@
 /**
  * WP Plugin QA MCP Server - Main Server
- * 28 tools exposed (33 defined; 5 hidden by EXCLUDED_NON_FUNCTIONAL in tools.ts).
+ * 29 tools exposed (33 defined; 4 hidden by EXCLUDED_NON_FUNCTIONAL in tools.ts).
  * Groups: discovery (scan), product-eval (admin/frontend/ux/templates/a11y),
  * systemic-misalignment (wiring, enum, rest-js contract, css contract,
  * editor-layout-bias, ux-guidelines, plugin-dev-rules, qa-coverage,
@@ -63,6 +63,8 @@ export declare class WpPluginQaServer {
     private handleLearnFromBasecamp;
     private formatCheckerResult;
     private successResult;
+    /** A gate's report body, flagged as an MCP error when its verdict is FAIL. */
+    private gateResult;
     private errorResult;
     private handleAuditInitJourneys;
     private handleAuditCoverageCheck;

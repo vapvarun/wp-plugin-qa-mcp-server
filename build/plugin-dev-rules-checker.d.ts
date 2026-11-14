@@ -31,3 +31,24 @@
  */
 import type { CheckerResult } from './types.js';
 export declare function checkPluginDevRules(pluginPath: string): CheckerResult;
+/**
+ * Collect the REST handlers that are authorized at the route layer: a route
+ * `callback` whose own args array also carries a `permission_callback` (other
+ * than `__return_true`), plus the permission callbacks themselves. A nonce
+ * check inside one of those does not need a sibling current_user_can().
+ *
+ * `$this` callbacks are keyed to the file that registers them, so a handler
+ * of the same name in another class is not exempted by accident.
+ * ponytail: name-based, not type-resolved. A `[ $other, 'name' ]` or
+ * `'Class::name'` callable exempts every function called `name`; resolve the
+ * class through the php-ast sidecar if that ever hides a real finding.
+ */
+export declare function collectRestProtectedHandlers(phpFiles: string[]): {
+    names: Set<string>;
+    byFile: Map<string, Set<string>>;
+};
+/**
+ * Body of the innermost function, method or closure containing idx, or null
+ * at file top level. Brace-counted, so a brace inside a string can end it early.
+ */
+export declare function enclosingFunctionBody(content: string, idx: number): string | null;

@@ -12,7 +12,12 @@ export interface RunOptions {
     artifactsDir?: string;
 }
 export interface Ledger {
+    /** True only for verdict PASS. */
     ok: boolean;
+    /** FAIL: a row failed or a guard dangles. INCOMPLETE: nothing failed, but part of the gate did not run. */
+    verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
+    /** What did not run. Never counted as a pass. */
+    incomplete: string[];
     mode: string;
     summary: {
         pass: number;
@@ -28,6 +33,15 @@ export interface Ledger {
     stale_known: string[];
 }
 export declare function runChecks(o: RunOptions): Promise<Ledger>;
+/**
+ * The gate's verdict. A skip that is not a known, carded failure is a check that did not run, and a
+ * full run that never opened the site (`ranLive` false: the config holds only release checks) checked
+ * no behaviour. Neither fails the gate; neither is a pass.
+ */
+export declare function judge(rows: Row[], dangling: string[], ranLive: boolean): {
+    verdict: Ledger['verdict'];
+    incomplete: string[];
+};
 /**
  * Known failures stay visible but do not fail the gate; each one names its open card.
  * A row is excused only when every finding in it is filed, so a new finding in the same row still fails.

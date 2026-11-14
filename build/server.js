@@ -1,6 +1,6 @@
 /**
  * WP Plugin QA MCP Server - Main Server
- * 28 tools exposed (33 defined; 5 hidden by EXCLUDED_NON_FUNCTIONAL in tools.ts).
+ * 29 tools exposed (33 defined; 4 hidden by EXCLUDED_NON_FUNCTIONAL in tools.ts).
  * Groups: discovery (scan), product-eval (admin/frontend/ux/templates/a11y),
  * systemic-misalignment (wiring, enum, rest-js contract, css contract,
  * editor-layout-bias, ux-guidelines, plugin-dev-rules, qa-coverage,
@@ -33,7 +33,7 @@ import { evaluateAdmin } from './admin-evaluator.js';
 import { evaluateFrontend } from './frontend-evaluator.js';
 import { buildReport, exportSarif, exportJunit } from './report-builder.js';
 import { runCertify, formatCertify, runEngine, formatEngine } from './cert-runner.js';
-import { probeRoleMatrix } from './role-matrix-prober.js';
+import { probeRoleMatrix, formatRoleMatrix } from './role-matrix-prober.js';
 import { crossReferenceData } from './data-cross-reference.js';
 import { bootstrapPlan } from './plan-bootstrap.js';
 import { learnFromBasecamp } from './basecamp-learner.js';
@@ -194,7 +194,7 @@ export class WpPluginQaServer {
             freshSiteUrl: a.fresh_site_url,
             artifactsDir: a.artifacts_dir,
         });
-        return this.successResult(formatLedger(ledger));
+        return this.gateResult(formatLedger(ledger), ledger.summary.fail > 0 || ledger.dangling.length > 0);
     }
     handleCertify(wpRoot, cliNamespace, check) {
         if (!wpRoot)
@@ -202,7 +202,7 @@ export class WpPluginQaServer {
         if (!cliNamespace)
             return this.errorResult('cli_namespace is required (e.g. "buddynext")');
         const result = runCertify({ wpRoot, cliNamespace, check });
-        return this.successResult(formatCertify(result));
+        return this.gateResult(formatCertify(result), !result.ledger?.ok);
     }
     handleAudit(wpRoot, pluginPath, oraclesPath) {
         if (!wpRoot)
@@ -210,7 +210,9 @@ export class WpPluginQaServer {
         if (!pluginPath)
             return this.errorResult('plugin_path is required');
         const result = runEngine({ wpRoot, pluginPath, oraclesPath });
-        return this.successResult(formatEngine(result));
+        // Did not run, unparseable, or a failing row is an error. A ledger with
+        // no data is reported as NO DATA by formatEngine and is not a pass.
+        return this.gateResult(formatEngine(result), !result.ledger || (result.ledger.summary.fail ?? 0) > 0);
     }
     async handleCheckApi(pluginPath, siteUrl) {
         if (!pluginPath)
@@ -430,23 +432,25 @@ export class WpPluginQaServer {
         // Step 5: Build unified report over product + systemic (+ live) results
         const allResults = [...productResults, ...systemicResults];
         const qaReport = buildReport(manifest.header.name || manifest.header.slug, manifest.header.version, allResults);
-        // Step 6: Format output
+        // Step 6: Format output. Any error-level issue fails the audit, in every format.
+        const auditFailed = allResults.some(r => r.issues.some(i => i.type === 'error'));
         if (format === 'json') {
-            return this.successResult(JSON.stringify({
+            return this.gateResult(JSON.stringify({
+                verdict: auditFailed ? 'FAIL' : 'PASS',
                 standardsNote: STANDARDS_NOTE,
                 grade: qaReport.grade,
                 score: qaReport.score,
                 summary: qaReport.summary,
                 productQuality: productResults,
                 systemicMisalignment: systemicResults,
-            }, null, 2));
+            }, null, 2), auditFailed);
         }
         if (format === 'sarif' || format === 'junit') {
             // Export the product + systemic QaReport. SARIF targets GitHub Code
             // Scanning and VS Code's SARIF viewer; JUnit targets CI consumption.
-            return this.successResult(format === 'sarif' ? exportSarif(qaReport) : exportJunit(qaReport));
+            return this.gateResult(format === 'sarif' ? exportSarif(qaReport) : exportJunit(qaReport), auditFailed);
         }
-        let output = `FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
+        let output = `${auditFailed ? 'FAIL' : 'PASS'} FULL PLUGIN AUDIT\n${'='.repeat(60)}\n\n`;
         output += `${STANDARDS_NOTE}\n\n`;
         const renderGroup = (title, results) => {
             let s = `${title} (${results.length} checks)\n${'-'.repeat(40)}\n`;
@@ -464,7 +468,7 @@ export class WpPluginQaServer {
         };
         output += renderGroup('PRODUCT QUALITY', productResults);
         output += renderGroup('SYSTEMIC MISALIGNMENT', systemicResults);
-        return this.successResult(output);
+        return this.gateResult(output, auditFailed);
     }
     // ─── Role / Data / Plan Handlers ────────────────────────────
     async handleProbeRoles(pluginPath, siteUrl, roles) {
@@ -473,7 +477,7 @@ export class WpPluginQaServer {
         if (!siteUrl)
             return this.errorResult('site_url is required');
         const report = await probeRoleMatrix({ pluginPath, siteUrl, roles });
-        return this.successResult(JSON.stringify(report, null, 2));
+        return this.gateResult(formatRoleMatrix(report), report.summary.verdict === 'FAIL');
     }
     handleCrossReferenceData(pluginPath) {
         if (!pluginPath)
@@ -573,6 +577,13 @@ export class WpPluginQaServer {
     successResult(message) {
         return {
             content: [{ type: 'text', text: message }],
+        };
+    }
+    /** A gate's report body, flagged as an MCP error when its verdict is FAIL. */
+    gateResult(message, failed) {
+        return {
+            content: [{ type: 'text', text: message }],
+            isError: failed,
         };
     }
     errorResult(message) {

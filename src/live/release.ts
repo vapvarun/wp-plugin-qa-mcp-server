@@ -38,7 +38,7 @@ export function checkPot(pluginPath: string, r: ReleaseConfig, slug: string, wpB
 export function checkBuild(pluginPath: string, r: ReleaseConfig): Row {
   const guard = 'release:build';
   const scripts = (r.build_scripts ?? ['bin/build-release.sh']).filter((s) => existsSync(join(pluginPath, s)));
-  if (!scripts.length) return { guard, status: 'skip', detail: 'no build script found' };
+  if (!scripts.length) return { guard, status: 'skip', detail: `NOT RUN: no build script found (${(r.build_scripts ?? ['bin/build-release.sh']).join(', ')}), so make-pot handling is unchecked` };
   const bad: string[] = [];
   for (const s of scripts) {
     const lines = readFileSync(join(pluginPath, s), 'utf8').split('\n');
@@ -55,52 +55,139 @@ export function checkBuild(pluginPath: string, r: ReleaseConfig): Row {
     : { guard, status: 'pass', detail: 'make-pot failure stops the build' };
 }
 
-/** Root-anchored entries of .distignore (what build scripts pass to rsync) plus configured prefixes. */
-export function excludedPaths(pluginPath: string, r: ReleaseConfig): { prefixes: string[]; names: string[] } {
-  const prefixes = [...(r.excluded ?? [])];
-  const names = ['node_modules', 'vendor', '.git'];
-  const dist = join(pluginPath, '.distignore');
-  if (existsSync(dist)) {
-    for (const raw of readFileSync(dist, 'utf8').split('\n')) {
-      const line = raw.trim();
-      if (!line || line.startsWith('#')) continue;
-      if (line.startsWith('/')) prefixes.push(line.slice(1));
-      else names.push(line.replace(/\/$/, ''));
-    }
-  }
-  return { prefixes: [...new Set(prefixes)], names };
+interface Rule { re: RegExp; dirOnly: boolean; negated: boolean }
+
+const globToRegex = (glob: string) =>
+  glob
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*\/?/g, '\u0000')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '[^/]')
+    .replace(/\u0000/g, '.*');
+
+/**
+ * One .distignore line as a gitignore-style rule: a leading or inner "/"
+ * anchors it to the plugin root, otherwise it matches that name at any depth;
+ * a trailing "/" limits it to directories; "!" re-includes; "#" is a comment.
+ */
+export function distignoreRule(raw: string, forceAnchor = false): Rule | null {
+  let p = raw.trim();
+  if (!p || p.startsWith('#')) return null;
+  const negated = p.startsWith('!');
+  if (negated) p = p.slice(1);
+  const dirOnly = p.endsWith('/');
+  if (dirOnly) p = p.slice(0, -1);
+  const anchored = forceAnchor || p.includes('/');
+  p = p.replace(/^\//, '');
+  if (!p) return null;
+  return { re: new RegExp(`${anchored ? '^' : '(?:^|/)'}${globToRegex(p)}$`), dirOnly, negated };
 }
 
-function shipped(dir: string, root: string, ex: { prefixes: string[]; names: string[] }, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
-    const rel = relative(root, p);
-    const isDir = statSync(p).isDirectory();
-    if (ex.names.includes(name) || ex.prefixes.some((x) => (x.endsWith('/') ? `${rel}/`.startsWith(x) : rel === x))) continue;
-    if (isDir) shipped(p, root, ex, out);
-    else if (/\.(php|js)$/.test(name) && !name.endsWith('.min.js')) out.push(p);
+/** Never scanned and never treated as "excluded from the zip" unless .distignore says so. */
+const NEVER_SCANNED = ['node_modules', 'vendor', '.git'];
+
+export interface Excluded {
+  /** Every directory the zip leaves out, as "path/" relative to the plugin root. */
+  dirs: string[];
+  /** Shipped .php / .js files. */
+  files: string[];
+}
+
+/** Walk the plugin applying .distignore (last matching rule wins) plus the configured `release.excluded` prefixes. */
+export function excludedPaths(pluginPath: string, r: ReleaseConfig): Excluded {
+  const rules: Rule[] = [];
+  for (const x of r.excluded ?? []) {
+    const rule = distignoreRule(x, true);
+    if (rule) rules.push(rule);
   }
+  const dist = join(pluginPath, '.distignore');
+  if (existsSync(dist)) {
+    for (const line of readFileSync(dist, 'utf8').split('\n')) {
+      const rule = distignoreRule(line);
+      if (rule) rules.push(rule);
+    }
+  }
+  // A configured directory counts even when it is absent on disk (the check may run against an unpacked zip).
+  const out: Excluded = { dirs: (r.excluded ?? []).filter((x) => x.endsWith('/')).map((x) => x.replace(/^\//, '')), files: [] };
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      const rel = relative(pluginPath, p);
+      const isDir = statSync(p).isDirectory();
+      const hit = rules.filter((x) => (isDir || !x.dirOnly) && x.re.test(rel)).pop();
+      if (hit && !hit.negated) {
+        if (isDir && !out.dirs.includes(`${rel}/`)) out.dirs.push(`${rel}/`);
+        continue;
+      }
+      if (isDir) {
+        if (!NEVER_SCANNED.includes(name)) walk(p);
+      } else if (/\.(php|js)$/.test(name) && !name.endsWith('.min.js')) out.files.push(p);
+    }
+  };
+  walk(pluginPath);
   return out;
 }
 
-const isComment = (line: string) => /^\s*(\/\/|\*|\/\*|#)/.test(line);
+/**
+ * Blank out comments, keeping line numbers and string contents. PHP is only
+ * parsed inside <?php ... ?>, so apostrophes and "#" in template HTML are left
+ * alone. Limits: heredoc bodies and JS regex literals are read as code, so a
+ * "//" or quote inside one can blank the rest of that line.
+ */
+export function stripComments(src: string, php: boolean): string {
+  let out = '';
+  let inPhp = !php;
+  let quote = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    const two = src.slice(i, i + 2);
+    if (!inPhp) {
+      if (two === '<?') inPhp = true;
+      out += c;
+    } else if (quote) {
+      out += c;
+      if (c === '\\') out += src[++i] ?? '';
+      else if (c === quote || (!php && c === '\n' && quote !== '`')) quote = '';
+    } else if (c === "'" || c === '"' || c === '`') {
+      quote = c;
+      out += c;
+    } else if (two === '/*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end === -1 ? src.length : end + 2;
+      out += src.slice(i, stop).replace(/[^\n]/g, ' ');
+      i = stop - 1;
+    } else if (two === '//' || (php && c === '#' && src[i + 1] !== '[')) {
+      let stop = src.indexOf('\n', i);
+      if (stop === -1) stop = src.length;
+      // In PHP a close tag ends a one-line comment.
+      const close = php ? src.indexOf('?>', i) : -1;
+      if (close !== -1 && close < stop) stop = close;
+      out += ' '.repeat(stop - i);
+      i = stop - 1;
+    } else {
+      if (php && two === '?>') inPhp = false;
+      out += c;
+    }
+  }
+  return out;
+}
 
 /** Shipped code that names an excluded path must check the file exists, or it breaks only on real installs. */
 export function checkRefs(pluginPath: string, r: ReleaseConfig): Row {
   const guard = 'release:refs';
   const ex = excludedPaths(pluginPath, r);
-  const dirs = ex.prefixes.filter((x) => x.endsWith('/'));
-  if (!dirs.length) return { guard, status: 'skip', detail: 'no excluded directories (.distignore or release.excluded)' };
+  const dirs = ex.dirs;
+  if (!dirs.length) return { guard, status: 'skip', detail: 'NOT RUN: no excluded directories (.distignore or release.excluded), so nothing was checked' };
   const bad: string[] = [];
-  const files = shipped(pluginPath, pluginPath, ex).map((f) => ({ f, lines: readFileSync(f, 'utf8').split('\n') }));
+  const files = ex.files.map((f) => ({ f, lines: stripComments(readFileSync(f, 'utf8'), f.endsWith('.php')).split('\n') }));
   const guarded = /file_exists|is_readable|is_file|is_dir/;
   // Request keys whose handler only works when an excluded file is present (e.g. ?seed_demo=1 -> tools/seed.php).
   const devOnlyKeys = new Map<string, string>();
   for (const { f, lines } of files) {
     lines.forEach((line, i) => {
-      if (isComment(line)) return;
       for (const d of dirs) {
-        if (!new RegExp(`['"\`]${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(line)) continue;
+        // 'tools/x.php' and __DIR__ . '/tools/x.php' are the same dependency.
+        if (!new RegExp(`['"\`]/?${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(line)) continue;
         if ((r.allow_refs ?? []).some((a) => line.includes(a))) continue;
         const near = lines.slice(Math.max(0, i - 4), i + 5).join('\n');
         if (!guarded.test(near)) {
@@ -116,7 +203,7 @@ export function checkRefs(pluginPath: string, r: ReleaseConfig): Row {
   for (const [key, handler] of devOnlyKeys) {
     for (const { f, lines } of files) {
       lines.forEach((line, i) => {
-        if (isComment(line) || /\$_(GET|REQUEST|POST)\[/.test(line)) return;
+        if (/\$_(GET|REQUEST|POST)\[/.test(line)) return;
         if (!new RegExp(`[?&'"]${key}(=|['"])`).test(line)) return;
         if (guarded.test(lines.slice(Math.max(0, i - 6), i + 3).join('\n'))) return;
         bad.push(`${relative(pluginPath, f)}:${i + 1} offers "${key}", which works only with an excluded file (${handler})`);
