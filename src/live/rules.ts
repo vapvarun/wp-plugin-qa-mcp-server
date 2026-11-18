@@ -241,6 +241,8 @@ export function walkRules(root: string): RuleFailure[] {
   for (const el of Array.from(scope.querySelectorAll('[class]'))) {
     const cls = typeof el.className === 'string' ? el.className : '';
     if (!/(__|-)(list|grid|items|platforms|options|cards|rows)\b/.test(cls)) continue;
+    // Decorative icons are empty by design (icon-font or mask), e.g. class "icon-list-checks".
+    if (el.getAttribute('aria-hidden') === 'true') continue;
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
     if (s.display === 'none' || s.visibility === 'hidden') continue;

@@ -18,10 +18,16 @@ export function loadConfig(pluginPath) {
         throw new Error(`missing ${p}`);
     const raw = JSON.parse(readFileSync(p, 'utf8'));
     // Credentials never go in the committed config: a gitignored qa-config.local.json adds them per machine.
+    // The site differs per machine too, so the local file may also set base_url.
     const local = join(pluginPath, 'docs', 'qa', 'qa-config.local.json');
-    const extra = existsSync(local) ? (JSON.parse(readFileSync(local, 'utf8')).personas ?? {}) : {};
+    const localRaw = existsSync(local) ? JSON.parse(readFileSync(local, 'utf8')) : {};
+    // A persona may be a bare login string (older configs) or null (role not used on this plugin).
+    const norm = (o) => Object.fromEntries(Object.entries(o ?? {})
+        .filter(([, v]) => v !== null && v !== undefined && v !== '')
+        .map(([k, v]) => [k, typeof v === 'string' ? { autologin: v } : v]));
+    const extra = norm(localRaw.personas);
     const personas = {};
-    const merged = { ...(raw.personas ?? {}) };
+    const merged = norm(raw.personas);
     for (const [name, v] of Object.entries(extra))
         merged[name] = { ...(merged[name] ?? {}), ...v };
     for (const [name, v] of Object.entries(merged)) {
@@ -39,7 +45,7 @@ export function loadConfig(pluginPath) {
     });
     return {
         slug: raw.slug,
-        base_url: (raw.base_url ?? '').replace(/\/$/, ''),
+        base_url: (localRaw.base_url ?? raw.base_url ?? '').replace(/\/$/, ''),
         autologin_param: raw.autologin_param ?? 'autologin',
         personas,
         themes,
