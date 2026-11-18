@@ -138,6 +138,23 @@ async function setScheme(page: Page, base: string, theme: ThemeConfig | undefine
   await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
   // Themes render the toggle more than once (desktop bar, mobile bar, menu); only one is visible per width.
   const btn = page.locator(`${theme.dark.toggle}:visible`).first();
+  // Some themes keep the toggle inside a closed mobile menu at phone widths. The choice is stored by
+  // the theme, so set it at desktop width and come back: the narrow page then loads in that mode.
+  const vp = page.viewportSize();
+  const narrow = vp && vp.width < 1024 && !(await btn.count()) && (await page.locator(theme.dark.toggle).count()) > 0;
+  if (narrow) {
+    await page.setViewportSize({ width: 1280, height: vp.height });
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+  }
+  try {
+    await clickUntil(page, btn, theme, want);
+  } finally {
+    if (narrow) await page.setViewportSize(vp);
+  }
+}
+
+async function clickUntil(page: Page, btn: ReturnType<Page['locator']>, theme: ThemeConfig, want: 'dark' | 'light'): Promise<void> {
+  if (!theme.dark) return;
   for (let i = 0; i < 4; i++) {
     const isDark = await page.locator(theme.dark.until).count();
     const mode = await btn.getAttribute('data-mode').catch(() => null);

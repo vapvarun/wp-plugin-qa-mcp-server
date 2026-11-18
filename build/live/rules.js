@@ -109,11 +109,23 @@ export function pageRules(a) {
             const neutral = own && Math.max(own[0], own[1], own[2]) - Math.min(own[0], own[1], own[2]) < 40;
             if (own && own[3] >= 0.9 && neutral && s.backgroundImage === 'none' && rect.width >= 240 && rect.height >= 60) {
                 const L = lum(own);
-                if (a.dark ? L > 0.3 : L < 0.4)
+                // A panel that declares the opposite color-scheme (an owner-coloured card) is light or dark on purpose.
+                const declared = s.colorScheme || '';
+                const onPurpose = declared === (a.dark ? 'light' : 'dark');
+                if (!onPurpose && (a.dark ? L > 0.3 : L < 0.4))
                     surfaces.push(`${name(el)} ${s.backgroundColor}`);
             }
             // A plugin palette of its own (slate on a neutral black theme) reads as a different site.
-            if (a.dark && neutralTheme && own && own[3] >= 0.9 && s.backgroundImage === 'none' && rect.width >= 240 && rect.height >= 60 && lum(own) < 0.3 && spread(own) >= 12) {
+            // A status tint marks some items of a list (podium row, completed challenge) while their siblings of the
+            // same kind stay neutral; that is a marker, not a palette, so it is not counted.
+            const kind = el.classList[0];
+            const statusTint = !!kind && Array.from(el.parentElement?.children ?? []).some((k) => {
+                if (k === el || k.classList[0] !== kind)
+                    return false;
+                const kb = rgba(getComputedStyle(k).backgroundColor);
+                return !!kb && kb[3] >= 0.9 && spread(kb) < 12;
+            });
+            if (a.dark && neutralTheme && !statusTint && own && own[3] >= 0.9 && s.backgroundImage === 'none' && rect.width >= 240 && rect.height >= 60 && lum(own) < 0.3 && spread(own) >= 12) {
                 offPalette.push(`${name(el)} ${s.backgroundColor} on ${document.body.tagName.toLowerCase()} rgb(${pageBg.slice(0, 3).join(', ')})`);
             }
             const cardLike = (n) => {

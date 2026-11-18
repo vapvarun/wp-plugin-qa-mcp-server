@@ -68,6 +68,19 @@ test('slate panels on a neutral dark theme are off-palette', async () => {
   assert.ok(!(await rules(html('#161616'), { dark: true })).includes('off-palette'));
 });
 
+test('a light card that declares color-scheme: light is not a leftover light panel', async () => {
+  const html = (extra: string) => `<div class="p" style="background:#111">${card('#ffeedd', '<p style="color:#1a1a2e">Owner card</p>', extra)}</div>`;
+  assert.ok((await rules(html(''), { dark: true })).includes('dark-surface'));
+  assert.ok(!(await rules(html('color-scheme:light'), { dark: true })).includes('dark-surface'));
+});
+
+test('a status tint on some rows of a list is not off-palette; tinting every row is', async () => {
+  const row = (bg: string) => `<li class="r" style="background:${bg};width:500px;height:64px;list-style:none;color:#eee">Row</li>`;
+  const html = (rows: string) => `<style>body{background:#0a0a0a!important}</style><div class="p"><ul style="padding:0">${rows}</ul></div>`;
+  assert.ok(!(await rules(html(row('#161616') + row('#2b2215') + row('#161616')), { dark: true })).includes('off-palette'));
+  assert.ok((await rules(html(row('#1e293b') + row('#1e293b')), { dark: true })).includes('off-palette'));
+});
+
 test('form rows inside a card are not repeated items', async () => {
   const row = `<div class="r" style="width:500px;height:70px"><label>Name</label><input type="text"></div>`;
   assert.ok(!(await rules(`<div class="p">${card('#fff', `<div class="body">${row}${row}</div>`)}</div>`)).includes('merged-items'));
